@@ -12,15 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Dependency metadata first, for better layer caching.
 COPY pyproject.toml tox.ini ./
 
-# Install the package and its runtime dependencies.
-RUN pip install --no-cache-dir -e .
-
-# Application source.
+# Application source needed for the editable install to register packages.
 COPY rxconfig.py app.py ./
 COPY src/ ./src/
 
+# Install the package and its runtime dependencies.
+RUN pip install --no-cache-dir -e .
+
 # Non-root user for runtime.
 RUN useradd --create-home --shell /bin/bash appuser && \
+    mkdir -p /app/data && chown appuser:appuser /app/data && \
     chown -R appuser:appuser /app
 USER appuser
 
