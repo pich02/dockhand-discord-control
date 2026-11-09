@@ -54,4 +54,5 @@ layers = [
     "dockhand_discord_control.discord",
     "dockhand_discord_control.persistence",
     "dockhand_discord_control.domain",
+    "dockhand_discord_control.config",
 ]
