@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dockhand-discord-control"
+version = "0.1.0"
+description = "Discord bot and Reflex web UI for controlling a self-hosted Dockhand server."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "reflex",
+    "discord.py",
+    "httpx",
+    "pydantic",
+    "pydantic-settings",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pyright",
+    "import-linter",
+    "pytest",
+    "tox",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_packages = ["dockhand_discord_control"]
+
+[[tool.importlinter.contracts]]
+name = "Dockhand Discord Control layered architecture"
+type = "layers"
+layers = [
+    "dockhand_discord_control.ui",
+    "dockhand_discord_control.dockhand",
+    "dockhand_discord_control.discord",
+    "dockhand_discord_control.persistence",
+    "dockhand_discord_control.domain",
+]
