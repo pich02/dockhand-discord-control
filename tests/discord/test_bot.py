@@ -12,6 +12,7 @@ from dockhand_discord_control.domain.models import (
     ChannelMapping,
 )
 from dockhand_discord_control.domain.use_cases import (
+    RestartContainerUseCase,
     SnapshotUseCase,
     StartContainerUseCase,
     StopContainerUseCase,
@@ -53,6 +54,7 @@ def _make_handlers() -> DiscordCommandHandlers:
         snapshot_use_case=SnapshotUseCase(client),
         start_use_case=StartContainerUseCase(client, repo),
         stop_use_case=StopContainerUseCase(client, repo),
+        restart_use_case=RestartContainerUseCase(client, repo),
         mapping_repo=repo,
     )
 
@@ -68,7 +70,7 @@ def test_bot_stores_token_and_handlers_without_connecting() -> None:
     assert isinstance(bot._handlers, DiscordCommandHandlers)
 
 
-def test_register_commands_registers_all_four_slash_commands() -> None:
+def test_register_commands_registers_all_five_slash_commands() -> None:
     bot = _make_bot()
     bot.register_commands()
 
@@ -76,6 +78,7 @@ def test_register_commands_registers_all_four_slash_commands() -> None:
     assert bot.tree.get_command("dockhand_list") is not None
     assert bot.tree.get_command("dockhand_start") is not None
     assert bot.tree.get_command("dockhand_stop") is not None
+    assert bot.tree.get_command("dockhand_restart") is not None
 
 
 class _FakeResponse:
@@ -108,6 +111,12 @@ _START_STOP_CASES = (
     ("dockhand_stop", "web", "Stop succeeded: stopped"),
 )
 
+_RESTART_CASE = (
+    "dockhand_restart",
+    "web",
+    "Restart succeeded: stopped then started container web",
+)
+
 
 def test_start_and_stop_delegate_to_handlers_and_reply_ephemerally() -> None:
     bot = _make_bot()
@@ -126,6 +135,25 @@ def test_start_and_stop_delegate_to_handlers_and_reply_ephemerally() -> None:
         assert sent is not None
         assert sent == expected_reply
         assert interaction.followup.ephemeral is True
+
+
+def test_restart_delegates_to_handlers_and_replies_ephemerally() -> None:
+    bot = _make_bot()
+    bot.register_commands()
+
+    command_name, container, expected_reply = _RESTART_CASE
+    command = bot.tree.get_command(command_name)
+    assert isinstance(command, app_commands.Command)
+
+    interaction = _FakeInteraction(channel_id=123)
+    callback: Any = command.callback
+    asyncio.run(callback(interaction, container))
+
+    assert interaction.response.deferred is True
+    sent = interaction.followup.sent
+    assert sent is not None
+    assert sent == expected_reply
+    assert interaction.followup.ephemeral is True
 
 
 def test_status_and_list_reply_ephemerally() -> None:
@@ -156,6 +184,22 @@ def test_unauthorized_channel_replies_not_authorized() -> None:
 
     interaction = _FakeInteraction(channel_id=999)  # no mapping for this channel
     command = bot.tree.get_command("dockhand_start")
+    assert isinstance(command, app_commands.Command)
+    callback: Any = command.callback
+    asyncio.run(callback(interaction, "web"))
+
+    assert interaction.followup.ephemeral is True
+    sent = interaction.followup.sent
+    assert sent is not None
+    assert "not authorized" in sent.lower()
+
+
+def test_restart_unauthorized_channel_replies_not_authorized() -> None:
+    bot = _make_bot()
+    bot.register_commands()
+
+    interaction = _FakeInteraction(channel_id=999)  # no mapping for this channel
+    command = bot.tree.get_command("dockhand_restart")
     assert isinstance(command, app_commands.Command)
     callback: Any = command.callback
     asyncio.run(callback(interaction, "web"))

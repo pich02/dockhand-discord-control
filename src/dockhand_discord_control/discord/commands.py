@@ -15,8 +15,12 @@ directly.
 from __future__ import annotations
 
 from dockhand_discord_control.domain.models import ActionResult
-from dockhand_discord_control.domain.ports import ChannelMappingRepository
+from dockhand_discord_control.domain.ports import (
+    ChannelMappingRepository,
+    ContainerActionUseCase,
+)
 from dockhand_discord_control.domain.use_cases import (
+    RestartContainerUseCase,
     SnapshotUseCase,
     StartContainerUseCase,
     StopContainerUseCase,
@@ -34,11 +38,13 @@ class DiscordCommandHandlers:
         snapshot_use_case: SnapshotUseCase,
         start_use_case: StartContainerUseCase,
         stop_use_case: StopContainerUseCase,
+        restart_use_case: RestartContainerUseCase,
         mapping_repo: ChannelMappingRepository,
     ) -> None:
         self._snapshot_use_case = snapshot_use_case
         self._start_use_case = start_use_case
         self._stop_use_case = stop_use_case
+        self._restart_use_case = restart_use_case
         self._mapping_repo = mapping_repo
 
     def handle_status(self, interaction: object, channel_id: str) -> str:
@@ -73,11 +79,21 @@ class DiscordCommandHandlers:
         )
         return rendering.render_action_result(result, "stop")
 
+    def handle_restart(
+        self, interaction: object, channel_id: str, container_name: str
+    ) -> str:
+        """Restart (stop and start) a container through the authorized channel."""
+        del interaction  # owned by the Discord layer; the reply is returned as text
+        result = self._authorized_container_action(
+            channel_id, container_name, self._restart_use_case
+        )
+        return rendering.render_action_result(result, "restart")
+
     def _authorized_container_action(
         self,
         channel_id: str,
         container_name: str,
-        action: StartContainerUseCase | StopContainerUseCase,
+        action: ContainerActionUseCase,
     ) -> ActionResult:
         """Authorize the channel for the container, then perform the action.
 

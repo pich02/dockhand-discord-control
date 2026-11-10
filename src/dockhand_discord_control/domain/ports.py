@@ -49,6 +49,19 @@ class ChannelMappingRepository(Protocol):
 
 
 @runtime_checkable
+class ContainerActionUseCase(Protocol):
+    """Port for use cases that act on a container on behalf of a channel.
+
+    Every container action use case authorizes the calling channel and then
+    performs the action, so adapters can treat them interchangeably.
+    """
+
+    def execute(self, channel_id: str, container_name: str) -> ActionResult:
+        """Perform the action for an authorized channel."""
+        raise NotImplementedError
+
+
+@runtime_checkable
 class SettingsRepository(Protocol):
     """Port for configuration settings."""
 
