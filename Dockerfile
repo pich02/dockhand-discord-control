@@ -28,8 +28,9 @@ USER appuser
 # Reflex web UI port.
 EXPOSE 8080
 
-# `python -m reflex run` boots the UI; `build_app()` in app.py starts the
-# Discord bridge in a daemon thread on app init (best-effort).
+# `reflex run` boots the UI; `build_app()` in app.py starts the Discord bridge in
+# a daemon thread on app init (best-effort). `--single-port` requires `--env prod`
+# and runs frontend+backend on the same port; `--backend-host` binds to 0.0.0.0.
 # `data/` holds ./data/app.sqlite (the SQLite default path) and is mounted
 # as a volume by docker-compose.
-CMD ["python", "-m", "reflex", "run", "--env", "prod", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["reflex", "run", "--env", "prod", "--single-port", "--frontend-port", "8080", "--backend-port", "8080", "--backend-host", "0.0.0.0"]
