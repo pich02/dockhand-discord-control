@@ -90,10 +90,19 @@ class AppState(rx.State):
         snapshot_use_case: _SnapshotUseCase | None = None,
         **kwargs: Any,
     ) -> None:
-        # ``init_substates`` and ``_reflex_internal_init`` are Reflex internals
-        # that :class:`BaseState` (pydantic) does not accept as init arguments.
+        # Forward the Reflex-internal init flags so the framework can
+        # instantiate the state directly during compilation (e.g.
+        # ``compile_state`` calls ``state(_reflex_internal_init=True)``)
+        # without tripping the "do not instantiate state directly" guard.
         self._init_bookkeeping(parent_state)
-        super().__init__(**kwargs)
+        # pyright cannot infer pydantic's dynamically generated ``__init__``
+        # signature, so these legitimate Reflex-internal flags are ignored here.
+        super().__init__(
+            parent_state=parent_state,
+            init_substates=init_substates,  # type: ignore[call-arg]
+            _reflex_internal_init=_reflex_internal_init,  # type: ignore[call-arg]
+            **kwargs,
+        )
         # Dependency-injected collaborators.  Name-mangled instance attributes
         # are not class fields, so Reflex does not treat them as state vars.
         self.__settings_repo = settings_repo
