@@ -15,11 +15,9 @@ directly.
 from __future__ import annotations
 
 from dockhand_discord_control.domain.models import ActionResult
-from dockhand_discord_control.domain.ports import (
-    ChannelMappingRepository,
-    ContainerActionUseCase,
-)
+from dockhand_discord_control.domain.ports import ChannelMappingRepository
 from dockhand_discord_control.domain.use_cases import (
+    ContainerActionUseCase,
     RestartContainerUseCase,
     SnapshotUseCase,
     StartContainerUseCase,

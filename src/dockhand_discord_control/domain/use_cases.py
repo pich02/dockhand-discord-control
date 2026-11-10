@@ -3,9 +3,24 @@
 No infrastructure, persistence, UI, or docker calls happen here.
 """
 
+from typing import Protocol, runtime_checkable
+
 from .exceptions import DockhandClientError, MappingNotFoundError, UnauthorizedError
 from .models import ActionResult, ChannelMapping, DockerContainer, Snapshot
 from .ports import ChannelMappingRepository, DockhandClient
+
+
+@runtime_checkable
+class ContainerActionUseCase(Protocol):
+    """Contract for use cases that act on a container on behalf of a channel.
+
+    Every container action use case authorizes the calling channel and then
+    performs the action, so adapters can treat them interchangeably.
+    """
+
+    def execute(self, channel_id: str, container_name: str) -> ActionResult:
+        """Perform the action for an authorized channel."""
+        raise NotImplementedError
 
 
 class SnapshotUseCase:
@@ -117,19 +132,34 @@ class RestartContainerUseCase:
             stop_result = self._client.stop_container(mapping.container_name)
         except DockhandClientError as exc:
             return ActionResult(
-                ok=False, message=f"stop failed: {str(exc) or 'dockhand client error'}"
+                ok=False,
+                message=(
+                    f"could not stop the container: "
+                    f"{str(exc) or 'dockhand client error'}"
+                ),
             )
         if not stop_result.ok:
-            return ActionResult(ok=False, message=f"stop failed: {stop_result.message}")
+            return ActionResult(
+                ok=False,
+                message=f"could not stop the container: {stop_result.message}",
+            )
         try:
             start_result = self._client.start_container(mapping.container_name)
         except DockhandClientError as exc:
             return ActionResult(
-                ok=False, message=f"start failed: {str(exc) or 'dockhand client error'}"
+                ok=False,
+                message=(
+                    f"could not start the container after stopping it: "
+                    f"{str(exc) or 'dockhand client error'}"
+                ),
             )
         if not start_result.ok:
             return ActionResult(
-                ok=False, message=f"start failed: {start_result.message}"
+                ok=False,
+                message=(
+                    f"could not start the container after stopping it: "
+                    f"{start_result.message}"
+                ),
             )
         return ActionResult(
             ok=True,

@@ -329,7 +329,7 @@ def test_handle_restart_reports_stop_failure_and_skips_start() -> None:
     assert client.stopped == ["web"]
     assert client.started == []
     assert "restart failed" in reply.lower()
-    assert "stop failed" in reply.lower()
+    assert "could not stop" in reply.lower()
 
 
 def test_handle_restart_reports_start_failure_after_successful_stop() -> None:
@@ -341,7 +341,7 @@ def test_handle_restart_reports_start_failure_after_successful_stop() -> None:
     assert client.stopped == ["web"]
     assert client.started == ["web"]
     assert "restart failed" in reply.lower()
-    assert "start failed" in reply.lower()
+    assert "could not start" in reply.lower()
 
 
 def test_handle_restart_client_error_renders_friendly_reply() -> None:
@@ -354,3 +354,15 @@ def test_handle_restart_client_error_renders_friendly_reply() -> None:
     assert client.started == []
     assert "restart failed" in reply.lower()
     assert "stop rejected" in reply
+
+
+def test_handle_restart_start_client_error_renders_friendly_reply() -> None:
+    mapping = ChannelMapping(container_name="web", channel_id="ch1", enabled=True)
+    handlers, client, _repo = _make_handlers(mapping=mapping, fail_start=True)
+
+    reply = handlers.handle_restart(_INTERACTION, "ch1", "web")
+
+    assert client.stopped == ["web"]
+    assert client.started == ["web"]
+    assert "restart failed" in reply.lower()
+    assert "start rejected" in reply
