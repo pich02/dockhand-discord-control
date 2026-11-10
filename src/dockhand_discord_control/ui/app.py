@@ -15,6 +15,7 @@ from dockhand_discord_control.discord import DiscordBot
 from dockhand_discord_control.discord.commands import DiscordCommandHandlers
 from dockhand_discord_control.dockhand.client import DockhandApiClient
 from dockhand_discord_control.domain.use_cases import (
+    RestartContainerUseCase,
     SnapshotUseCase,
     StartContainerUseCase,
     StopContainerUseCase,
@@ -86,6 +87,7 @@ def _build_command_handlers(
         snapshot_use_case=SnapshotUseCase(client),
         start_use_case=StartContainerUseCase(client, mapping_repo),
         stop_use_case=StopContainerUseCase(client, mapping_repo),
+        restart_use_case=RestartContainerUseCase(client, mapping_repo),
         mapping_repo=mapping_repo,
     )
 
