@@ -1,0 +1,21 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      DOCKHAND_BASE_URL: ${DOCKHAND_BASE_URL}
+      DOCKHAND_API_TOKEN: ${DOCKHAND_API_TOKEN}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID}
+      DB_PATH: /app/data/app.sqlite
+    volumes:
+      - dockhand_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  dockhand_data:

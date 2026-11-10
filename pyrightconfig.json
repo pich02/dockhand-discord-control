@@ -1,0 +1,15 @@
+{
+    "include": ["src", "tests"],
+    "exclude": [
+        "**/node_modules",
+        "**/.git",
+        "**/.tox",
+        "**/.venv",
+        "**/__pycache__",
+        "**/build",
+        "**/dist"
+    ],
+    "extraPaths": ["src"],
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.13"
+}
