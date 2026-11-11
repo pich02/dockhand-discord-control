@@ -12,6 +12,7 @@ not treat them as serializable state vars.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any, Protocol, TypedDict
 
 import reflex as rx
@@ -64,6 +65,24 @@ class _SnapshotUseCase(Protocol):
     def execute(self) -> Snapshot: ...
 
 
+class _DiscordBridge(Protocol):
+    """Discord bridge lifecycle used by the UI."""
+
+    def start(
+        self,
+        *,
+        token: str | None,
+        guild_id: str | None,
+        base_url: str,
+        api_token: str,
+        db_path: str,
+    ) -> tuple[bool, str]: ...
+
+    def stop(self) -> None: ...
+
+    def status(self) -> str: ...
+
+
 class _Mapping(TypedDict):
     """A row rendered by the mappings page."""
 
@@ -82,6 +101,7 @@ class AppState(rx.State):
     environments: list[DockhandEnvironment] = []
     containers: list[DockerContainer] = []
     status_message: str = ""
+    discord_bot_status: str = ""
     mappings: list[_Mapping] = []
 
     def __init__(
@@ -92,6 +112,8 @@ class AppState(rx.State):
         settings_repo: _SettingsRepository | None = None,
         mapping_repo: _ChannelMappingRepository | None = None,
         snapshot_use_case: _SnapshotUseCase | None = None,
+        discord_bridge: _DiscordBridge | None = None,
+        token_verifier: Callable[[str], str | None] | None = None,
         **kwargs: Any,
     ) -> None:
         # Forward the Reflex-internal init flags so the framework can
@@ -112,6 +134,10 @@ class AppState(rx.State):
         self.__settings_repo = settings_repo
         self.__mapping_repo = mapping_repo
         self.__snapshot_use_case = snapshot_use_case
+        # An injected use case is owned by the caller and must not be replaced.
+        self.__owns_snapshot_use_case = snapshot_use_case is None
+        self.__discord_bridge = discord_bridge
+        self.__token_verifier = token_verifier
 
     # -- collaborators ----------------------------------------------------
 
@@ -154,33 +180,124 @@ class AppState(rx.State):
             self.__snapshot_use_case = use_case
         return use_case
 
+    def _discord_bridge(self) -> _DiscordBridge:
+        bridge = self.__discord_bridge
+        if bridge is None:
+            from dockhand_discord_control.ui.bridge import discord_bridge
+
+            bridge = discord_bridge
+            self.__discord_bridge = bridge
+        return bridge
+
+    def _token_verifier(self) -> Callable[[str], str | None]:
+        verifier = self.__token_verifier
+        if verifier is None:
+            from dockhand_discord_control.ui.bridge import verify_discord_token
+
+            verifier = verify_discord_token
+            self.__token_verifier = verifier
+        return verifier
+
+    @staticmethod
+    def _db_path() -> str:
+        """Return the configured SQLite database path."""
+        from dockhand_discord_control.persistence import Settings
+
+        return Settings().db_path
+
     # -- settings ---------------------------------------------------------
 
     def load_settings(self) -> None:
         """Load dockhand and Discord settings from the repository."""
         repo = self._settings_repo()
-        base_url, token = repo.get_dockhand_settings()
+        try:
+            base_url, token = repo.get_dockhand_settings()
+            discord_token = repo.get_discord_token() or ""
+            guild_id = repo.get_discord_guild_id() or ""
+        except Exception as exc:
+            logger.exception("load_settings failed")
+            self.status_message = f"Failed to load settings: {exc}"
+            return
         self.dockhand_base_url = base_url
         self.dockhand_api_token = token
-        self.discord_bot_token = repo.get_discord_token() or ""
-        self.discord_guild_id = repo.get_discord_guild_id() or ""
+        self.discord_bot_token = discord_token
+        self.discord_guild_id = guild_id
         self.status_message = "Settings loaded."
 
     def save_settings(self) -> None:
-        """Persist dockhand and Discord settings after validation."""
-        if not self.dockhand_base_url or not self.dockhand_api_token:
+        """Persist dockhand and Discord settings, then verify the connections."""
+        base_url = self.dockhand_base_url.strip()
+        api_token = self.dockhand_api_token.strip()
+        if not base_url or not api_token:
             self.status_message = "Dockhand base URL and API token are required."
             return
         repo = self._settings_repo()
-        repo.set_dockhand_settings(self.dockhand_base_url, self.dockhand_api_token)
-        repo.set_discord_token(self.discord_bot_token or None)
-        repo.set_discord_guild_id(self.discord_guild_id or None)
-        self.__snapshot_use_case = None
-        self.status_message = "Settings saved."
+        try:
+            repo.set_dockhand_settings(base_url, api_token)
+            repo.set_discord_token(self.discord_bot_token.strip() or None)
+            repo.set_discord_guild_id(self.discord_guild_id.strip() or None)
+        except Exception as exc:
+            logger.exception("save_settings failed")
+            self.status_message = f"Failed to save settings: {exc}"
+            return
+        self.dockhand_base_url = base_url
+        self.dockhand_api_token = api_token
+        # The Dockhand client is rebuilt from the saved values.
+        if self.__owns_snapshot_use_case:
+            self.__snapshot_use_case = None
+        messages = ["Settings saved.", self._check_dockhand_connection()]
+        messages.append(self._apply_discord_settings())
+        self.status_message = " ".join(messages)
+
+    def _check_dockhand_connection(self) -> str:
+        """Verify the Dockhand API answers with the saved credentials."""
+        try:
+            snapshot = self._snapshot_use_case().execute()
+        except Exception as exc:
+            logger.warning("Dockhand connection check failed: %s", exc)
+            return f"Dockhand connection failed: {exc}"
+        return (
+            f"Dockhand reachable ({len(snapshot.environments)} environment(s), "
+            f"{len(snapshot.containers)} container(s))."
+        )
+
+    def _apply_discord_settings(self) -> str:
+        """Start, restart or stop the Discord bridge to match the settings."""
+        token = self.discord_bot_token.strip()
+        bridge = self._discord_bridge()
+        if not token:
+            try:
+                bridge.stop()
+            except Exception as exc:  # pragma: no cover - shutdown best effort
+                logger.warning("Could not stop the Discord bot: %s", exc)
+            self.discord_bot_status = bridge.status()
+            return "Discord bot not started: no bot token configured."
+        try:
+            warning = self._token_verifier()(token)
+        except Exception as exc:
+            logger.warning("Discord token check failed: %s", exc)
+            warning = f"the token could not be checked ({exc})"
+        try:
+            _started, message = bridge.start(
+                token=token,
+                guild_id=self.discord_guild_id.strip() or None,
+                base_url=self.dockhand_base_url,
+                api_token=self.dockhand_api_token,
+                db_path=self._db_path(),
+            )
+        except Exception as exc:
+            logger.exception("Could not start the Discord bot")
+            self.discord_bot_status = f"Discord bot failed to start: {exc}"
+            return self.discord_bot_status
+        self.discord_bot_status = bridge.status()
+        if warning:
+            return f"{message} Token check: {warning}."
+        return message
 
     def load_dashboard(self) -> None:
         """Load settings then refresh the status snapshot for the dashboard."""
         self.load_settings()
+        self.discord_bot_status = self._discord_bridge().status()
         if not self.dockhand_base_url or not self.dockhand_api_token:
             self.status_message = "Configure Dockhand settings to load status."
             return
@@ -189,6 +306,7 @@ class AppState(rx.State):
     def load_mappings_page(self) -> None:
         """Load settings, ensure containers are available, then load mappings."""
         self.load_settings()
+        self.discord_bot_status = self._discord_bridge().status()
         if not self.dockhand_base_url or not self.dockhand_api_token:
             self.status_message = "Configure Dockhand settings to load mappings."
             return
@@ -214,28 +332,38 @@ class AppState(rx.State):
         """Load all channel mappings for the known containers."""
         repo = self._mapping_repo()
         loaded: list[_Mapping] = []
-        for container in self.containers:
-            for mapping in repo.mappings_for_container(container.name):
-                loaded.append(
-                    _Mapping(
-                        container_name=mapping.container_name,
-                        channel_id=mapping.channel_id,
-                        enabled=mapping.enabled,
+        try:
+            for container in self.containers:
+                for mapping in repo.mappings_for_container(container.name):
+                    loaded.append(
+                        _Mapping(
+                            container_name=mapping.container_name,
+                            channel_id=mapping.channel_id,
+                            enabled=mapping.enabled,
+                        )
                     )
-                )
+        except Exception as exc:
+            logger.exception("load_mappings failed")
+            self.status_message = f"Failed to load mappings: {exc}"
+            return
         self.mappings = loaded
         self.status_message = f"Loaded {len(loaded)} mapping(s)."
 
     def save_mapping(self, container_name: str, channel_id: str, enabled: bool) -> None:
         """Upsert a channel mapping and refresh the in-state list."""
         repo = self._mapping_repo()
-        repo.add_mapping(
-            ChannelMapping(
-                container_name=container_name,
-                channel_id=channel_id,
-                enabled=enabled,
+        try:
+            repo.add_mapping(
+                ChannelMapping(
+                    container_name=container_name,
+                    channel_id=channel_id,
+                    enabled=enabled,
+                )
             )
-        )
+        except Exception as exc:
+            logger.exception("save_mapping failed")
+            self.status_message = f"Failed to save mapping: {exc}"
+            return
         self._upsert_mapping(container_name, channel_id, enabled)
         self.status_message = (
             f"Mapping saved for {container_name} on channel {channel_id}."
@@ -268,7 +396,12 @@ class AppState(rx.State):
                 f"No mapping for {container_name} on channel {channel_id}."
             )
             return
-        repo.set_enabled(channel_id, new_enabled)
+        try:
+            repo.set_enabled(channel_id, new_enabled)
+        except Exception as exc:
+            logger.exception("toggle_mapping failed")
+            self.status_message = f"Failed to update mapping: {exc}"
+            return
         self.mappings = updated
         self.status_message = (
             f"Mapping {'enabled' if new_enabled else 'disabled'} "

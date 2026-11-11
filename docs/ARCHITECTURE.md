@@ -111,6 +111,8 @@ Dependency rule:
 
 - SQLite: singleton settings row + `channel_mappings` rows
   (`container_name`, `channel_id`, `enabled`).
+- The parent directory of the database file is created when missing, so the
+  default path (`./data/app.sqlite`) works in a fresh checkout.
 
 ### 4.5 Config
 
@@ -130,6 +132,17 @@ Dependency rule:
 - Mappings page: choose container visibility (enabled), choose Discord channel per
   container.
 
+### 4.7 Discord bridge lifecycle (`ui/bridge.py`)
+
+- `DiscordBridge` owns the background bot thread and can start, stop and restart
+  it at runtime, so a token saved through the web UI takes effect without a
+  restart.
+- The bot token is checked against the Discord API before the bridge starts; the
+  check result is reported in the UI as a warning (the bot is still started).
+- Saving settings persists the values, then verifies the Dockhand connection and
+  reconciles the bridge with the saved token. Every failure is reported through
+  the status message; nothing fails silently.
+
 ## 5. Discord ↔ Dockhand flow (MVP)
 
 1. User invokes a Discord slash command in a channel.
@@ -147,7 +160,9 @@ keeping the Dockhand API integration untouched.
 
 1. UI state loads settings + mappings (persistence ports) and, for dashboard,
    queries the domain snapshot.
-2. Settings page persists via settings port.
+2. Settings page persists via settings port, then verifies the Dockhand
+   connection and starts/restarts/stops the Discord bridge to match the saved
+   token. Failures are surfaced in the status message.
 3. Mappings page persists via mappings port.
 4. The in-process bridge (same service) consumes mappings when Discord commands run.
 

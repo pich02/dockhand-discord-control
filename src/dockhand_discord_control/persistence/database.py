@@ -8,6 +8,7 @@ name, and `init_db` creates the application tables (idempotently).
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from .migrations import ensure_schema_version
 
@@ -20,7 +21,15 @@ SETTINGS_KEY_DISCORD_GUILD_ID = "discord_guild_id"
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
-    """Open a SQLite connection to *db_path* with row factory enabled."""
+    """Open a SQLite connection to *db_path* with row factory enabled.
+
+    The parent directory is created when missing: the default path
+    (``./data/app.sqlite``) points at a directory that a fresh checkout does
+    not have, and SQLite refuses to create the file in that case.
+    """
+    parent = Path(db_path).expanduser().parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn

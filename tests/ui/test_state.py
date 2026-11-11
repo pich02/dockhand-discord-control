@@ -109,6 +109,41 @@ class FakeSnapshotUseCase:
         return self._snapshot
 
 
+class FakeDiscordBridge:
+    """Fake for the Discord bridge lifecycle."""
+
+    def __init__(self, message: str = "Discord bot started.") -> None:
+        self._message = message
+        self.started: list[dict[str, str | None]] = []
+        self.stopped = False
+
+    def start(
+        self,
+        *,
+        token: str | None,
+        guild_id: str | None,
+        base_url: str,
+        api_token: str,
+        db_path: str,
+    ) -> tuple[bool, str]:
+        self.started.append(
+            {
+                "token": token,
+                "guild_id": guild_id,
+                "base_url": base_url,
+                "api_token": api_token,
+                "db_path": db_path,
+            }
+        )
+        return True, self._message
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def status(self) -> str:
+        return "Discord bot is running."
+
+
 def _environment(environment_id: str, name: str) -> DockhandEnvironment:
     return DockhandEnvironment(
         id=environment_id,
@@ -148,7 +183,12 @@ def test_load_settings_reads_from_repository() -> None:
 
 def test_save_settings_persists_to_repository() -> None:
     repo = FakeSettingsRepository()
-    state = AppState(settings_repo=repo)
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bot-token"
@@ -159,7 +199,117 @@ def test_save_settings_persists_to_repository() -> None:
     assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
     assert repo.saved_discord == "bot-token"
     assert repo.saved_discord_guild_id == "guild-1"
-    assert state.status_message == "Settings saved."
+    assert "Settings saved." in state.status_message
+
+
+def test_save_settings_starts_the_discord_bridge() -> None:
+    repo = FakeSettingsRepository()
+    bridge = FakeDiscordBridge()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=bridge,
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+    state.discord_bot_token = "bot-token"
+
+    state.save_settings()
+
+    assert len(bridge.started) == 1
+    assert bridge.started[0]["token"] == "bot-token"
+    assert bridge.started[0]["base_url"] == "http://dockhand:8080"
+    assert "Discord bot started." in state.status_message
+
+
+def test_save_settings_reports_token_check_warning() -> None:
+    repo = FakeSettingsRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: "the Discord bot token was rejected",
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+    state.discord_bot_token = "bad-token"
+
+    state.save_settings()
+
+    assert "Token check: the Discord bot token was rejected" in state.status_message
+
+
+def test_save_settings_reports_dockhand_connection_failure() -> None:
+    repo = FakeSettingsRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(exc=RuntimeError("connection refused")),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    state.save_settings()
+
+    assert "Dockhand connection failed" in state.status_message
+    assert "connection refused" in state.status_message
+    # The settings are still persisted.
+    assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
+
+
+def test_save_settings_reports_persistence_failure() -> None:
+    class FailingRepository(FakeSettingsRepository):
+        def set_dockhand_settings(self, base_url: str, token: str) -> None:
+            raise RuntimeError("database is locked")
+
+    repo = FailingRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    state.save_settings()
+
+    assert "Failed to save settings" in state.status_message
+    assert "database is locked" in state.status_message
+
+
+def test_save_settings_without_token_stops_the_bridge() -> None:
+    repo = FakeSettingsRepository()
+    bridge = FakeDiscordBridge()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=bridge,
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    state.save_settings()
+
+    assert bridge.stopped
+    assert bridge.started == []
+    assert "no bot token configured" in state.status_message
+
+
+def test_load_settings_reports_read_failure() -> None:
+    class FailingRepository(FakeSettingsRepository):
+        def get_dockhand_settings(self) -> tuple[str, str]:
+            raise RuntimeError("no such table: app_settings")
+
+    state = AppState(settings_repo=FailingRepository())
+
+    state.load_settings()
+
+    assert "Failed to load settings" in state.status_message
+    assert "no such table" in state.status_message
 
 
 def test_save_settings_validates_required_fields() -> None:

@@ -111,3 +111,17 @@ docker compose logs -f
 
 Configuration is read from `.env` (docker compose) or the environment (local run).
 Runtime overrides may also be stored in SQLite via the Reflex UI.
+
+### Saving settings from the UI
+
+Pressing **Save settings** on `/settings`:
+
+1. persists the Dockhand and Discord values in SQLite (the `data/` directory is
+   created automatically),
+2. checks that the Dockhand API answers with the saved credentials,
+3. starts, restarts or stops the Discord bot so it matches the saved token.
+
+The outcome is shown as one status message, for example
+`Settings saved. Dockhand reachable (2 environment(s), 5 container(s)). Discord bot started.`
+Failures are reported in the same place instead of failing silently; the current
+bot state is also shown on the dashboard.

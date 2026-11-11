@@ -7,25 +7,12 @@ and starts the Discord bridge as a best-effort background daemon thread.
 from __future__ import annotations
 
 import logging
-import threading
 
 import reflex as rx
 
-from dockhand_discord_control.discord import DiscordBot
-from dockhand_discord_control.discord.commands import DiscordCommandHandlers
-from dockhand_discord_control.dockhand.client import DockhandApiClient
-from dockhand_discord_control.domain.use_cases import (
-    RestartContainerUseCase,
-    SnapshotUseCase,
-    StartContainerUseCase,
-    StopContainerUseCase,
-)
-from dockhand_discord_control.persistence import (
-    Settings,
-    SqliteChannelMappingRepository,
-    SqliteSettingsRepository,
-)
+from dockhand_discord_control.persistence import Settings, SqliteSettingsRepository
 
+from .bridge import discord_bridge
 from .pages import dashboard_page, mappings_page, settings_page
 from .state import AppState
 
@@ -62,12 +49,15 @@ def _start_discord_bridge() -> None:
     """Start the Discord bot in a background daemon thread, best-effort.
 
     Never raises: a missing token or any adapter failure is logged and the UI
-    keeps running.
+    keeps running.  The bridge is the shared instance used by the settings
+    page, so a token saved at runtime restarts the bot in place.
     """
     try:
         db_path = Settings().db_path
         settings_repo = SqliteSettingsRepository(db_path)
+        base_url, api_token = settings_repo.get_dockhand_settings()
         token = settings_repo.get_discord_token()
+        guild_id = settings_repo.get_discord_guild_id()
     except Exception as exc:  # pragma: no cover - infrastructure failure
         logger.warning("Discord bridge skipped: cannot read settings: %s", exc)
         return
@@ -75,33 +65,13 @@ def _start_discord_bridge() -> None:
         logger.info("Discord bridge skipped: no Discord bot token configured")
         return
     try:
-        bot = DiscordBot(
+        _started, message = discord_bridge.start(
             token=token,
-            handlers=_build_command_handlers(settings_repo, db_path),
-            guild_id=settings_repo.get_discord_guild_id(),
+            guild_id=guild_id,
+            base_url=base_url,
+            api_token=api_token,
+            db_path=db_path,
         )
-        thread = threading.Thread(
-            target=bot.run,
-            daemon=True,
-            name="discord-bridge",
-        )
-        thread.start()
-        logger.info("Discord bridge started in background thread")
+        logger.info(message)
     except Exception as exc:  # pragma: no cover - adapter failure
         logger.warning("Discord bridge failed to start: %s", exc)
-
-
-def _build_command_handlers(
-    settings_repo: SqliteSettingsRepository,
-    db_path: str = "./data/app.sqlite",
-) -> DiscordCommandHandlers:
-    base_url, api_token = settings_repo.get_dockhand_settings()
-    client = DockhandApiClient(base_url=base_url, api_token=api_token)
-    mapping_repo = SqliteChannelMappingRepository(db_path)
-    return DiscordCommandHandlers(
-        snapshot_use_case=SnapshotUseCase(client),
-        start_use_case=StartContainerUseCase(client, mapping_repo),
-        stop_use_case=StopContainerUseCase(client, mapping_repo),
-        restart_use_case=RestartContainerUseCase(client, mapping_repo),
-        mapping_repo=mapping_repo,
-    )
