@@ -267,6 +267,71 @@ def test_load_mappings_uses_containers_and_repository() -> None:
     assert "2 mapping(s)" in state.status_message
 
 
+def test_load_dashboard_loads_settings_and_refreshes() -> None:
+    repo = FakeSettingsRepository(
+        base_url="http://dockhand:8080",
+        token="dockhand-secret",
+    )
+    env = _environment("e1", "prod")
+    container = _container("c1", "web", "e1")
+    use_case = FakeSnapshotUseCase(Snapshot(environments=[env], containers=[container]))
+    state = AppState(settings_repo=repo, snapshot_use_case=use_case)
+
+    state.load_dashboard()
+
+    assert state.dockhand_base_url == "http://dockhand:8080"
+    assert list(state.environments) == [env]
+    assert list(state.containers) == [container]
+    assert use_case.called
+
+
+def test_load_dashboard_missing_config_does_not_request() -> None:
+    repo = FakeSettingsRepository()
+    use_case = FakeSnapshotUseCase()
+    state = AppState(settings_repo=repo, snapshot_use_case=use_case)
+
+    state.load_dashboard()
+
+    assert "Configure Dockhand settings" in state.status_message
+    assert not use_case.called
+
+
+def test_load_mappings_page_loads_containers_and_mappings() -> None:
+    repo = FakeSettingsRepository(
+        base_url="http://dockhand:8080",
+        token="dockhand-secret",
+    )
+    mapping_repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    env = _environment("e1", "prod")
+    container = _container("c1", "web", "e1")
+    use_case = FakeSnapshotUseCase(Snapshot(environments=[env], containers=[container]))
+    state = AppState(
+        settings_repo=repo,
+        mapping_repo=mapping_repo,
+        snapshot_use_case=use_case,
+    )
+
+    state.load_mappings_page()
+
+    assert list(state.containers) == [container]
+    assert list(state.mappings) == [
+        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+    ]
+
+
+def test_load_mappings_page_missing_config_does_not_request() -> None:
+    repo = FakeSettingsRepository()
+    use_case = FakeSnapshotUseCase()
+    state = AppState(settings_repo=repo, snapshot_use_case=use_case)
+
+    state.load_mappings_page()
+
+    assert "Configure Dockhand settings" in state.status_message
+    assert not use_case.called
+
+
 def test_refresh_status_populates_lists() -> None:
     env = _environment("e1", "prod")
     container = _container("c1", "web", "e1")
