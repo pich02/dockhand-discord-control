@@ -270,11 +270,26 @@ class AppState(rx.State):
         api_token = self.dockhand_api_token.strip()
         discord_token = self.discord_bot_token.strip()
         guild_id = self.discord_guild_id.strip()
+        logger.info(
+            "save_settings called: base_url set=%s, api_token set=%s, "
+            "discord_token set=%s, guild_id set=%s",
+            bool(base_url),
+            bool(api_token),
+            bool(discord_token),
+            bool(guild_id),
+        )
         if not base_url or not api_token:
+            logger.warning(
+                "save_settings aborted: the Dockhand base URL and API token are "
+                "required (base_url set=%s, api_token set=%s)",
+                bool(base_url),
+                bool(api_token),
+            )
             self.status_message = "Dockhand base URL and API token are required."
             return
         try:
             repo = self._settings_repo()
+            logger.info("save_settings: writing the settings to %s", self._db_path())
             repo.set_dockhand_settings(base_url, api_token)
             repo.set_discord_token(discord_token or None)
             repo.set_discord_guild_id(guild_id or None)
@@ -282,6 +297,7 @@ class AppState(rx.State):
             logger.exception("save_settings failed")
             self.status_message = f"Failed to save settings: {exc}"
             return
+        logger.info("save_settings: the settings were persisted")
         self.dockhand_base_url = base_url
         self.dockhand_api_token = api_token
         # The Dockhand client is rebuilt from the saved values.

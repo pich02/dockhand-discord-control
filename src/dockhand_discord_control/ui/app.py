@@ -7,6 +7,8 @@ and starts the Discord bridge as a best-effort background daemon thread.
 from __future__ import annotations
 
 import logging
+import subprocess
+from pathlib import Path
 
 import reflex as rx
 
@@ -41,8 +43,37 @@ def build_app() -> rx.App:
         route="/mappings",
         on_load=AppState.load_mappings_page,  # type: ignore[arg-type]
     )
+    _log_runtime_info()
     _start_discord_bridge()
     return app
+
+
+def _log_runtime_info() -> None:
+    """Log the runtime configuration, so an operator can see what is live.
+
+    The database path and the commit the app was built from are the two facts
+    that explain "the settings were not saved" (a wrong or unwritable database
+    path) and "the fix does not work" (an older build).
+    """
+    db_path = Settings().db_path
+    logger.info("database path: %s (exists: %s)", db_path, Path(db_path).exists())
+    logger.info("commit: %s", _git_commit())
+
+
+def _git_commit() -> str:
+    """Return the short commit the app runs from, or ``unknown``."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - no git
+        return "unknown"
+    commit = result.stdout.strip()
+    return commit or "unknown"
 
 
 def _start_discord_bridge() -> None:
