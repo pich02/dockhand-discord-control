@@ -140,6 +140,24 @@ if _discord is not None and _ext_commands is not None:
                 reply = self._handlers.handle_stop(interaction, channel_id, container)
                 await interaction.followup.send(reply, ephemeral=True)
 
+            @tree.command(
+                name="dockhand_restart",
+                description="Restart a container this channel is authorized for",
+            )
+            async def dockhand_restart(
+                interaction: _Discord.Interaction, container: str
+            ) -> None:
+                await interaction.response.defer(ephemeral=True)
+                channel_id = (
+                    str(interaction.channel_id)
+                    if interaction.channel_id is not None
+                    else ""
+                )
+                reply = self._handlers.handle_restart(
+                    interaction, channel_id, container
+                )
+                await interaction.followup.send(reply, ephemeral=True)
+
         async def setup_hook(self) -> None:
             self.register_commands()
             # TODO: slash-command registration strategy is an open item.

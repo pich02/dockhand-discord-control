@@ -84,6 +84,8 @@ Dependency rule:
     and optionally the UI dashboard.
   - Start / stop use case — authorizes against the channel mapping before calling
     the dockhand client, returns `ActionResult`.
+  - Restart use case — authorizes against the channel mapping, then stops and starts
+    the container; a failed stop short-circuits the start.
 
 ### 4.2 Dockhand API adapter
 
@@ -99,6 +101,7 @@ Dependency rule:
   - `/dockhand_list`
   - `/dockhand_start <container>`
   - `/dockhand_stop <container>`
+  - `/dockhand_restart <container>`
 - Interaction flow: platform boundary → mapping authorization → domain use case →
   reply rendering → Discord response.
 - Authorization: a container may only be controlled from a Discord channel that has
@@ -132,7 +135,7 @@ Dependency rule:
 1. User invokes a Discord slash command in a channel.
 2. `discord` adapter receives the interaction (platform boundary; no dockhand types).
 3. Adapter resolves channel → container mapping (enabled?) via persistence port.
-4. Adapter calls the domain use case (`Start` / `Stop` / `Status` / `List`).
+4. Adapter calls the domain use case (`Start` / `Stop` / `Restart` / `Status` / `List`).
 5. Domain use case calls `DockhandClient`.
 6. Adapter renders the reply and answers the interaction; failures become friendly
    user-facing messages.
