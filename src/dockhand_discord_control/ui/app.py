@@ -38,9 +38,21 @@ def build_app() -> rx.App:
     responding even if Discord cannot be reached.
     """
     app = rx.App(_state=AppState)
-    app.add_page(dashboard_page, route="/", on_load=AppState.load_dashboard)
-    app.add_page(settings_page, route="/settings", on_load=AppState.load_settings)
-    app.add_page(mappings_page, route="/mappings", on_load=AppState.load_mappings_page)
+    app.add_page(
+        dashboard_page,
+        route="/",
+        on_load=AppState.load_dashboard,  # type: ignore[arg-type]
+    )
+    app.add_page(
+        settings_page,
+        route="/settings",
+        on_load=AppState.load_settings,  # type: ignore[arg-type]
+    )
+    app.add_page(
+        mappings_page,
+        route="/mappings",
+        on_load=AppState.load_mappings_page,  # type: ignore[arg-type]
+    )
     _start_discord_bridge()
     return app
 
