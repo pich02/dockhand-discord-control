@@ -28,6 +28,19 @@ from dockhand_discord_control.domain.models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _text(value: object) -> str:
+    """Return *value* as a stripped string.
+
+    The browser can send ``null`` for an input that was never filled in, and a
+    ``None`` in a state variable would make ``str.strip()`` raise.  Normalising
+    here keeps the save handler free of exceptions.
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 #: Instance attribute that holds the injected collaborators.  They contain
 #: SQLite connections, locks and threads, which cannot be pickled, so they are
 #: kept in a single attribute that is left out of the serialized state and
@@ -265,29 +278,32 @@ class AppState(rx.State):
         The handler is asynchronous because the verification steps talk to the
         network and to the Discord bot thread; they run in worker threads so
         the Reflex event loop stays responsive.
+
+        Every failure is reported through ``status_message``; nothing in this
+        handler may raise, otherwise the UI would stay silent.
         """
-        base_url = self.dockhand_base_url.strip()
-        api_token = self.dockhand_api_token.strip()
-        discord_token = self.discord_bot_token.strip()
-        guild_id = self.discord_guild_id.strip()
-        logger.info(
-            "save_settings called: base_url set=%s, api_token set=%s, "
-            "discord_token set=%s, guild_id set=%s",
-            bool(base_url),
-            bool(api_token),
-            bool(discord_token),
-            bool(guild_id),
-        )
-        if not base_url or not api_token:
-            logger.warning(
-                "save_settings aborted: the Dockhand base URL and API token are "
-                "required (base_url set=%s, api_token set=%s)",
+        try:
+            base_url = _text(self.dockhand_base_url)
+            api_token = _text(self.dockhand_api_token)
+            discord_token = _text(self.discord_bot_token)
+            guild_id = _text(self.discord_guild_id)
+            logger.info(
+                "save_settings called: base_url set=%s, api_token set=%s, "
+                "discord_token set=%s, guild_id set=%s",
                 bool(base_url),
                 bool(api_token),
+                bool(discord_token),
+                bool(guild_id),
             )
-            self.status_message = "Dockhand base URL and API token are required."
-            return
-        try:
+            if not base_url or not api_token:
+                logger.warning(
+                    "save_settings aborted: the Dockhand base URL and API token are "
+                    "required (base_url set=%s, api_token set=%s)",
+                    bool(base_url),
+                    bool(api_token),
+                )
+                self.status_message = "Dockhand base URL and API token are required."
+                return
             repo = self._settings_repo()
             logger.info("save_settings: writing the settings to %s", self._db_path())
             repo.set_dockhand_settings(base_url, api_token)
@@ -303,15 +319,25 @@ class AppState(rx.State):
         # The Dockhand client is rebuilt from the saved values.
         if self.__collaborators["owns_snapshot_use_case"]:
             self.__collaborators["snapshot_use_case"] = None
-        # Resolve the use case on the event loop thread; the worker only calls
-        # it, so the cached use case is never mutated off-loop.
-        use_case = self._snapshot_use_case()
-        dockhand_message = await asyncio.to_thread(
-            self._check_dockhand_connection, use_case
-        )
-        discord_message, bot_status = await asyncio.to_thread(
-            self._apply_discord_settings, discord_token, guild_id, base_url, api_token
-        )
+        try:
+            # Resolve the use case on the event loop thread; the worker only
+            # calls it, so the cached use case is never mutated off-loop.
+            use_case = self._snapshot_use_case()
+            dockhand_message = await asyncio.to_thread(
+                self._check_dockhand_connection, use_case
+            )
+            discord_message, bot_status = await asyncio.to_thread(
+                self._apply_discord_settings,
+                discord_token,
+                guild_id,
+                base_url,
+                api_token,
+            )
+        except Exception as exc:
+            logger.exception("save_settings verification failed")
+            self.discord_bot_status = f"Verification failed: {exc}"
+            self.status_message = f"Settings saved. Verification failed: {exc}"
+            return
         self.discord_bot_status = bot_status
         self.status_message = " ".join(
             ["Settings saved.", dockhand_message, discord_message]
@@ -386,16 +412,16 @@ class AppState(rx.State):
         self.load_mappings()
 
     def set_dockhand_base_url(self, value: str) -> None:
-        self.dockhand_base_url = value
+        self.dockhand_base_url = _text(value)
 
     def set_dockhand_api_token(self, value: str) -> None:
-        self.dockhand_api_token = value
+        self.dockhand_api_token = _text(value)
 
     def set_discord_bot_token(self, value: str) -> None:
-        self.discord_bot_token = value
+        self.discord_bot_token = _text(value)
 
     def set_discord_guild_id(self, value: str) -> None:
-        self.discord_guild_id = value
+        self.discord_guild_id = _text(value)
 
     # -- mappings ---------------------------------------------------------
 

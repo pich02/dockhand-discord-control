@@ -392,6 +392,36 @@ def test_settings_setter_methods_update_fields() -> None:
     assert state.discord_guild_id == "guild-123"
 
 
+def test_settings_setters_accept_null_values() -> None:
+    state = AppState()
+    state.set_dockhand_base_url(None)  # type: ignore[arg-type]
+    state.set_dockhand_api_token(None)  # type: ignore[arg-type]
+    state.set_discord_bot_token(None)  # type: ignore[arg-type]
+    state.set_discord_guild_id(None)  # type: ignore[arg-type]
+
+    assert state.dockhand_base_url == ""
+    assert state.dockhand_api_token == ""
+    assert state.discord_bot_token == ""
+    assert state.discord_guild_id == ""
+
+
+def test_save_settings_with_null_values_reports_instead_of_raising() -> None:
+    repo = FakeSettingsRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = None  # type: ignore[assignment]
+    state.dockhand_api_token = None  # type: ignore[assignment]
+
+    asyncio.run(state.save_settings())
+
+    assert repo.saved_dockhand is None
+    assert "Dockhand base URL and API token are required." in state.status_message
+
+
 def test_save_mapping_creates_and_updates() -> None:
     repo = FakeMappingRepository()
     state = AppState(mapping_repo=repo)
