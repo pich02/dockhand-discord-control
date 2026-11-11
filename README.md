@@ -145,3 +145,24 @@ uv run python scripts/e2e_settings_save.py
 It prints the status message, the bot status, the persisted rows and a
 `RESULT: PASS`/`FAIL` line. Use a dedicated database (as above): the check
 replaces the settings it finds and restores them when it is done.
+
+### Following the save flow in the logs
+
+The app logs the save flow at `INFO` level, so the terminal shows exactly
+where a save stops:
+
+```
+frontend connected (sid=…)                       # the browser reached the backend
+frontend event: set_dockhand_base_url            # an input changed
+frontend event: save_settings                    # the button was clicked
+save_settings called: base_url set=True, …       # the handler ran
+save_settings: writing the settings to ./data/app.sqlite
+writing the Dockhand settings to ./data/app.sqlite (base_url=http://…)
+save_settings: the settings were persisted
+```
+
+If there is no `frontend connected` line, the browser never reached the
+backend — in dev mode the UI is served by the frontend dev server
+(`http://localhost:3000`), not by the backend port. In production
+(`--env prod --single-port`) the UI and the API share one port.
+

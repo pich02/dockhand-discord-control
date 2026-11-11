@@ -27,6 +27,7 @@ def build_app() -> rx.App:
     The bridge is started in a background daemon thread so the UI keeps
     responding even if Discord cannot be reached.
     """
+    _configure_logging()
     app = rx.App(_state=AppState)
     app.add_page(
         dashboard_page,
@@ -43,9 +44,56 @@ def build_app() -> rx.App:
         route="/mappings",
         on_load=AppState.load_mappings_page,  # type: ignore[arg-type]
     )
+    _trace_frontend_events(app)
     _log_runtime_info()
     _start_discord_bridge()
     return app
+
+
+def _configure_logging() -> None:
+    """Make the application logs visible in the console.
+
+    Reflex does not configure the logging package, so without this the
+    application logs (``logger.info``) are dropped: Python falls back to the
+    ``lastResort`` handler, which only emits WARNING and above.  The save
+    flow reports itself through INFO logs, so they have to be visible.
+    """
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+    logging.getLogger("dockhand_discord_control").setLevel(logging.INFO)
+
+
+def _trace_frontend_events(app: rx.App) -> None:
+    """Log every frontend connection and event that reaches the backend.
+
+    This distinguishes "the browser never talked to the backend" (wrong URL,
+    stale frontend build) from "the event arrived but the handler failed".
+    The Socket.IO handlers live on the event namespace, not on the app.
+    """
+    namespace = getattr(app, "_event_namespace", None)
+    if namespace is None:  # pragma: no cover - depends on the Reflex version
+        logger.warning("could not trace the frontend events: no event namespace")
+        return
+    original_connect = namespace.on_connect
+    original_event = namespace.on_event
+
+    async def on_connect(sid: str, environ: dict, auth: object = None) -> object:
+        logger.info("frontend connected (sid=%s)", sid[:8])
+        return await original_connect(sid, environ, auth)
+
+    async def on_event(sid: str, data: object) -> object:
+        name = ""
+        if isinstance(data, dict):
+            name = str(data.get("name", "")).rsplit(".", 1)[-1]
+        logger.info("frontend event: %s", name or "<unknown>")
+        return await original_event(sid, data)
+
+    namespace.on_connect = on_connect  # type: ignore[method-assign]
+    namespace.on_event = on_event  # type: ignore[method-assign]
 
 
 def _log_runtime_info() -> None:
@@ -58,6 +106,11 @@ def _log_runtime_info() -> None:
     db_path = Settings().db_path
     logger.info("database path: %s (exists: %s)", db_path, Path(db_path).exists())
     logger.info("commit: %s", _git_commit())
+    logger.info(
+        "open the UI on the frontend port: in dev mode the frontend dev server "
+        "serves it (http://localhost:3000 by default) and the backend port alone "
+        "does not serve the UI"
+    )
 
 
 def _git_commit() -> str:
