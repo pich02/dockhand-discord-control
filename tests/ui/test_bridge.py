@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -28,6 +29,9 @@ class FakeBot:
         FakeBot.instances.append(self)
 
     async def start(self, token: str) -> None:
+        if self.closed:
+            # discord.py raises when the session was closed before login.
+            raise RuntimeError("Session is closed")
         self._stop = asyncio.Event()
         self.logged_in.set()
         assert self._stop is not None
@@ -45,6 +49,36 @@ class FailingBot(FakeBot):
     async def start(self, token: str) -> None:
         self.logged_in.set()
         raise RuntimeError("improper token format")
+
+
+class SlowLoginBot(FakeBot):
+    """A bot whose login never finishes on its own."""
+
+    async def start(self, token: str) -> None:
+        self._stop = asyncio.Event()
+        self.logged_in.set()
+        assert self._stop is not None
+        await self._stop.wait()
+
+
+class StubbornBot(FakeBot):
+    """A bot that ignores both ``close()`` and cancellation."""
+
+    async def start(self, token: str) -> None:
+        self._stop = asyncio.Event()
+        self.logged_in.set()
+        assert self._stop is not None
+        while True:
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=0.2)
+                return
+            except asyncio.CancelledError:
+                continue  # the bot refuses to give up
+            except TimeoutError:
+                continue
+
+    async def close(self) -> None:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -208,6 +242,49 @@ def test_bridge_reports_a_failed_login(
     assert bridge.error() is not None
     assert "improper token format" in bridge.status()
     assert "failed" in bridge.status()
+
+
+def test_bridge_stop_during_login_does_not_hang(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(bridge_module, "DiscordBot", SlowLoginBot)
+    bridge = DiscordBridge()
+    bridge.start(
+        token="bot-token",
+        guild_id=None,
+        base_url="http://dockhand:8080",
+        api_token="dockhand-secret",
+        db_path=str(tmp_path / "app.sqlite"),
+    )
+    assert SlowLoginBot.instances[0].logged_in.wait(timeout=5)
+
+    started = time.monotonic()
+    bridge.stop()
+
+    assert time.monotonic() - started < 5
+    assert not bridge.is_running()
+    assert bridge.error() is None
+
+
+def test_bridge_reports_a_bot_that_does_not_stop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(bridge_module, "DiscordBot", StubbornBot)
+    monkeypatch.setattr(DiscordBridge, "STOP_TIMEOUT", 0.5)
+    bridge = DiscordBridge()
+    bridge.start(
+        token="bot-token",
+        guild_id=None,
+        base_url="http://dockhand:8080",
+        api_token="dockhand-secret",
+        db_path=str(tmp_path / "app.sqlite"),
+    )
+    assert StubbornBot.instances[0].logged_in.wait(timeout=5)
+
+    bridge.stop()
+
+    assert bridge.is_running()
+    assert "did not stop cleanly" in bridge.status()
 
 
 def test_bridge_restarts_with_a_new_token(tmp_path: Path) -> None:

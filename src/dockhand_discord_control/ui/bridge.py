@@ -13,6 +13,7 @@ background thread.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import threading
 from typing import Any
@@ -85,6 +86,7 @@ class DiscordBridge:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._token: str | None = None
         self._config: tuple[str, str | None, str, str] | None = None
+        self._cancel: threading.Event | None = None
         self._error: str | None = None
 
     # -- queries ----------------------------------------------------------
@@ -131,6 +133,7 @@ class DiscordBridge:
         talks to the configured server.
         """
         ready = threading.Event()
+        cancel = threading.Event()
         with self._lock:
             if not token or not token.strip():
                 self._stop_locked()
@@ -164,10 +167,11 @@ class DiscordBridge:
             self._config = config
             with self._data_lock:
                 self._bot = bot
+                self._cancel = cancel
             self._set_error(None)
             thread = threading.Thread(
                 target=self._run,
-                args=(bot, token, ready),
+                args=(bot, token, ready, cancel),
                 daemon=True,
                 name="discord-bridge",
             )
@@ -177,6 +181,14 @@ class DiscordBridge:
         # following ``stop`` can close the bot instead of orphaning it.
         if not ready.wait(timeout=self.STARTUP_TIMEOUT):
             return True, "Discord bot is starting; it was not ready yet."
+        with self._lock:
+            alive = self._thread is not None and self._thread.is_alive()
+            current = self._config == config
+        if not alive or not current:
+            error = self.error()
+            if error:
+                return False, f"Discord bot failed to start: {error}"
+            return False, "The Discord bot was stopped while it was starting."
         return True, "Discord bot started."
 
     def stop(self) -> None:
@@ -194,7 +206,11 @@ class DiscordBridge:
         with self._data_lock:
             bot = self._bot
             loop = self._loop
+            cancel = self._cancel
         thread = self._thread
+        if cancel is not None:
+            # Tell the bot thread to give up before or during login.
+            cancel.set()
         if bot is not None and loop is not None and loop.is_running():
             future = asyncio.run_coroutine_threadsafe(bot.close(), loop)
             try:
@@ -213,21 +229,34 @@ class DiscordBridge:
         with self._data_lock:
             self._bot = None
             self._loop = None
+            self._cancel = None
         self._thread = None
         self._token = None
         self._config = None
         self._set_error(None)
 
-    def _run(self, bot: Any, token: str, ready: threading.Event) -> None:
+    def _run(
+        self,
+        bot: Any,
+        token: str,
+        ready: threading.Event,
+        cancel: threading.Event,
+    ) -> None:
         """Run the bot until it stops; record failures for the UI."""
         try:
-            asyncio.run(self._run_bot(bot, token, ready))
+            asyncio.run(self._run_bot(bot, token, ready, cancel))
         except Exception as exc:
             self._set_error(str(exc))
             logger.warning("Discord bot stopped with an error: %s", exc)
             ready.set()
 
-    async def _run_bot(self, bot: Any, token: str, ready: threading.Event) -> None:
+    async def _run_bot(
+        self,
+        bot: Any,
+        token: str,
+        ready: threading.Event,
+        cancel: threading.Event,
+    ) -> None:
         loop = asyncio.get_running_loop()
         # Only the data lock is taken here: the stopping thread holds the
         # lifecycle lock while it joins this thread, so taking it here would
@@ -237,11 +266,22 @@ class DiscordBridge:
             if current:
                 self._loop = loop
         ready.set()
-        if not current:
+        if not current or cancel.is_set():
             # The bot was replaced or stopped before it came up.
             await bot.close()
             return
-        await bot.start(token)
+        start_task = asyncio.ensure_future(bot.start(token))
+        while not start_task.done():
+            if cancel.is_set():
+                # Stopped while logging in: abandon the login attempt.
+                start_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await start_task
+                await bot.close()
+                return
+            await asyncio.sleep(0.1)
+        # Propagate a login failure to the caller, which records it.
+        await start_task
 
     @staticmethod
     def _build_handlers(

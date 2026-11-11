@@ -253,19 +253,24 @@ class AppState(rx.State):
         # The Dockhand client is rebuilt from the saved values.
         if self.__owns_snapshot_use_case:
             self.__snapshot_use_case = None
-        dockhand_message = await asyncio.to_thread(self._check_dockhand_connection)
+        # Resolve the use case on the event loop thread; the worker only calls
+        # it, so the cached use case is never mutated off-loop.
+        use_case = self._snapshot_use_case()
+        dockhand_message = await asyncio.to_thread(
+            self._check_dockhand_connection, use_case
+        )
         discord_message, bot_status = await asyncio.to_thread(
-            self._apply_discord_settings, discord_token, guild_id
+            self._apply_discord_settings, discord_token, guild_id, base_url, api_token
         )
         self.discord_bot_status = bot_status
         self.status_message = " ".join(
             ["Settings saved.", dockhand_message, discord_message]
         )
 
-    def _check_dockhand_connection(self) -> str:
+    def _check_dockhand_connection(self, use_case: _SnapshotUseCase) -> str:
         """Verify the Dockhand API answers with the saved credentials."""
         try:
-            snapshot = self._snapshot_use_case().execute()
+            snapshot = use_case.execute()
         except Exception as exc:
             logger.warning("Dockhand connection check failed: %s", exc)
             return f"Dockhand connection failed: {exc}"
@@ -274,7 +279,9 @@ class AppState(rx.State):
             f"{len(snapshot.containers)} container(s))."
         )
 
-    def _apply_discord_settings(self, token: str, guild_id: str) -> tuple[str, str]:
+    def _apply_discord_settings(
+        self, token: str, guild_id: str, base_url: str, api_token: str
+    ) -> tuple[str, str]:
         """Start, restart or stop the Discord bridge to match the settings.
 
         Returns the message for the status line and the current bot status.
@@ -296,8 +303,8 @@ class AppState(rx.State):
             _started, message = bridge.start(
                 token=token,
                 guild_id=guild_id or None,
-                base_url=self.dockhand_base_url,
-                api_token=self.dockhand_api_token,
+                base_url=base_url,
+                api_token=api_token,
                 db_path=self._db_path(),
             )
         except Exception as exc:
@@ -452,7 +459,8 @@ class AppState(rx.State):
         to keep the Reflex event loop responsive.
         """
         try:
-            snapshot = await asyncio.to_thread(self._snapshot_use_case().execute)
+            use_case = self._snapshot_use_case()
+            snapshot = await asyncio.to_thread(use_case.execute)
         except Exception as exc:  # keep the UI alive on adapter failure
             logger.exception("refresh_status failed")
             self.status_message = f"Failed to refresh status: {exc}"

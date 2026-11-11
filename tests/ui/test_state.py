@@ -7,6 +7,8 @@ tested directly with injected fakes.
 from __future__ import annotations
 
 import asyncio
+import inspect
+import threading
 
 from dockhand_discord_control.domain.models import (
     ChannelMapping,
@@ -299,6 +301,37 @@ def test_save_settings_without_token_stops_the_bridge() -> None:
     assert bridge.stopped
     assert bridge.started == []
     assert "no bot token configured" in state.status_message
+
+
+def test_save_settings_is_a_coroutine_handler() -> None:
+    assert inspect.iscoroutinefunction(AppState.save_settings.fn)
+    assert inspect.iscoroutinefunction(AppState.refresh_status.fn)
+    assert inspect.iscoroutinefunction(AppState.load_dashboard.fn)
+    assert inspect.iscoroutinefunction(AppState.load_mappings_page.fn)
+
+
+def test_save_settings_runs_the_dockhand_call_off_the_event_loop() -> None:
+    repo = FakeSettingsRepository()
+    threads: list[int] = []
+
+    class RecordingUseCase(FakeSnapshotUseCase):
+        def execute(self) -> Snapshot:
+            threads.append(threading.get_ident())
+            return super().execute()
+
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=RecordingUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    asyncio.run(state.save_settings())
+
+    assert threads
+    assert threads[0] != threading.get_ident()
 
 
 def test_load_settings_reports_read_failure() -> None:
