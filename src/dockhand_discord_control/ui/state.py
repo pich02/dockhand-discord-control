@@ -167,7 +167,7 @@ class AppState(rx.State):
         for name in _COLLABORATOR_ATTRS:
             setattr(self, name, None)
         # The restored state owns its Dockhand client again.
-        setattr(self, "_AppState__owns_snapshot_use_case", True)
+        self.__owns_snapshot_use_case = True
 
     def _settings_repo(self) -> _SettingsRepository:
         repo = self.__settings_repo

@@ -125,3 +125,22 @@ The outcome is shown as one status message, for example
 `Settings saved. Dockhand reachable (2 environment(s), 5 container(s)). Discord bot started.`
 Failures are reported in the same place instead of failing silently; the current
 bot state is also shown on the dashboard.
+
+### Checking the save flow end to end
+
+`scripts/e2e_settings_save.py` drives a running backend over its real
+Socket.IO transport (the same one the browser uses), clicks the equivalent of
+the "Save settings" button and asserts that the status message arrives and the
+values reach SQLite:
+
+```bash
+# terminal 1
+DB_PATH=./data/app.sqlite reflex run --env dev --backend-only \
+    --backend-port 8000 --backend-host 127.0.0.1
+
+# terminal 2
+uv run python scripts/e2e_settings_save.py
+```
+
+It prints the status message, the bot status, the persisted rows and a
+`RESULT: PASS`/`FAIL` line.
