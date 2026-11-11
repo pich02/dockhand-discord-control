@@ -135,7 +135,7 @@ values reach SQLite:
 
 ```bash
 # terminal 1
-DB_PATH=./data/app.sqlite reflex run --env dev --backend-only \
+DB_PATH=./data/e2e-app.sqlite reflex run --env dev --backend-only \
     --backend-port 8000 --backend-host 127.0.0.1
 
 # terminal 2
@@ -143,4 +143,5 @@ uv run python scripts/e2e_settings_save.py
 ```
 
 It prints the status message, the bot status, the persisted rows and a
-`RESULT: PASS`/`FAIL` line.
+`RESULT: PASS`/`FAIL` line. Use a dedicated database (as above): the check
+replaces the settings it finds and restores them when it is done.

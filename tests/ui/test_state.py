@@ -350,7 +350,8 @@ def test_state_with_a_sqlite_repository_can_be_pickled(
 
     assert restored.dockhand_base_url == ""
     # The collaborators are recreated on demand after unpickling.
-    assert restored._AppState__settings_repo is None
+    assert restored._AppState__collaborators["settings_repo"] is None
+    assert restored._AppState__collaborators["discord_bridge"] is None
 
 
 def test_load_settings_reports_read_failure() -> None:

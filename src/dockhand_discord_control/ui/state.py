@@ -28,16 +28,19 @@ from dockhand_discord_control.domain.models import (
 
 logger = logging.getLogger(__name__)
 
-#: Instance attributes that hold the injected collaborators.  They contain
+#: Instance attribute that holds the injected collaborators.  They contain
 #: SQLite connections, locks and threads, which cannot be pickled, so they are
-#: left out of the serialized state and recreated on demand.
-_COLLABORATOR_ATTRS = (
-    "_AppState__settings_repo",
-    "_AppState__mapping_repo",
-    "_AppState__snapshot_use_case",
-    "_AppState__owns_snapshot_use_case",
-    "_AppState__discord_bridge",
-    "_AppState__token_verifier",
+#: kept in a single attribute that is left out of the serialized state and
+#: recreated on demand.
+_COLLABORATOR_ATTR = "_AppState__collaborators"
+
+#: Keys of the collaborator mapping.
+_COLLABORATOR_KEYS = (
+    "settings_repo",
+    "mapping_repo",
+    "snapshot_use_case",
+    "discord_bridge",
+    "token_verifier",
 )
 
 
@@ -142,35 +145,39 @@ class AppState(rx.State):
             _reflex_internal_init=_reflex_internal_init,  # type: ignore[call-arg]
             **kwargs,
         )
-        # Dependency-injected collaborators.  Name-mangled instance attributes
-        # are not class fields, so Reflex does not treat them as state vars.
-        self.__settings_repo = settings_repo
-        self.__mapping_repo = mapping_repo
-        self.__snapshot_use_case = snapshot_use_case
-        # An injected use case is owned by the caller and must not be replaced.
-        self.__owns_snapshot_use_case = snapshot_use_case is None
-        self.__discord_bridge = discord_bridge
-        self.__token_verifier = token_verifier
+        # Dependency-injected collaborators.  They live in a single instance
+        # attribute that is not a class field, so Reflex does not treat them
+        # as state vars and does not try to serialize them.
+        self.__collaborators: dict[str, Any] = {
+            "settings_repo": settings_repo,
+            "mapping_repo": mapping_repo,
+            "snapshot_use_case": snapshot_use_case,
+            "discord_bridge": discord_bridge,
+            "token_verifier": token_verifier,
+            # An injected use case is owned by the caller and must not be
+            # replaced; a lazily built one is rebuilt after a save.
+            "owns_snapshot_use_case": snapshot_use_case is None,
+        }
 
     # -- collaborators ----------------------------------------------------
 
     def __getstate__(self) -> dict[str, Any]:
         """Return the serializable state, without the collaborators."""
         state = dict(super().__getstate__())
-        for name in _COLLABORATOR_ATTRS:
-            state.pop(name, None)
+        state.pop(_COLLABORATOR_ATTR, None)
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore the state and drop the collaborators (recreated lazily)."""
         super().__setstate__(state)
-        for name in _COLLABORATOR_ATTRS:
-            setattr(self, name, None)
-        # The restored state owns its Dockhand client again.
-        self.__owns_snapshot_use_case = True
+        self.__collaborators = {
+            **{key: None for key in _COLLABORATOR_KEYS},
+            # The restored state owns its Dockhand client again.
+            "owns_snapshot_use_case": True,
+        }
 
     def _settings_repo(self) -> _SettingsRepository:
-        repo = self.__settings_repo
+        repo = self.__collaborators["settings_repo"]
         if repo is None:
             from dockhand_discord_control.persistence import (
                 Settings,
@@ -178,11 +185,11 @@ class AppState(rx.State):
             )
 
             repo = SqliteSettingsRepository(Settings().db_path)
-            self.__settings_repo = repo
+            self.__collaborators["settings_repo"] = repo
         return repo
 
     def _mapping_repo(self) -> _ChannelMappingRepository:
-        repo = self.__mapping_repo
+        repo = self.__collaborators["mapping_repo"]
         if repo is None:
             from dockhand_discord_control.persistence import (
                 Settings,
@@ -190,11 +197,11 @@ class AppState(rx.State):
             )
 
             repo = SqliteChannelMappingRepository(Settings().db_path)
-            self.__mapping_repo = repo
+            self.__collaborators["mapping_repo"] = repo
         return repo
 
     def _snapshot_use_case(self) -> _SnapshotUseCase:
-        use_case = self.__snapshot_use_case
+        use_case = self.__collaborators["snapshot_use_case"]
         if use_case is None:
             from dockhand_discord_control.dockhand.client import DockhandApiClient
             from dockhand_discord_control.domain.use_cases import SnapshotUseCase
@@ -205,25 +212,25 @@ class AppState(rx.State):
                     api_token=self.dockhand_api_token,
                 )
             )
-            self.__snapshot_use_case = use_case
+            self.__collaborators["snapshot_use_case"] = use_case
         return use_case
 
     def _discord_bridge(self) -> _DiscordBridge:
-        bridge = self.__discord_bridge
+        bridge = self.__collaborators["discord_bridge"]
         if bridge is None:
             from dockhand_discord_control.ui.bridge import discord_bridge
 
             bridge = discord_bridge
-            self.__discord_bridge = bridge
+            self.__collaborators["discord_bridge"] = bridge
         return bridge
 
     def _token_verifier(self) -> Callable[[str], str | None]:
-        verifier = self.__token_verifier
+        verifier = self.__collaborators["token_verifier"]
         if verifier is None:
             from dockhand_discord_control.ui.bridge import verify_discord_token
 
             verifier = verify_discord_token
-            self.__token_verifier = verifier
+            self.__collaborators["token_verifier"] = verifier
         return verifier
 
     @staticmethod
@@ -278,8 +285,8 @@ class AppState(rx.State):
         self.dockhand_base_url = base_url
         self.dockhand_api_token = api_token
         # The Dockhand client is rebuilt from the saved values.
-        if self.__owns_snapshot_use_case:
-            self.__snapshot_use_case = None
+        if self.__collaborators["owns_snapshot_use_case"]:
+            self.__collaborators["snapshot_use_case"] = None
         # Resolve the use case on the event loop thread; the worker only calls
         # it, so the cached use case is never mutated off-loop.
         use_case = self._snapshot_use_case()
