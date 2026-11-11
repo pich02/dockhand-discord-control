@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Final
 
 from dockhand_discord_control.domain.ports import SettingsRepository
@@ -14,6 +15,8 @@ from .database import (
     get_connection,
     init_db,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["SqliteSettingsRepository"]
 
@@ -48,6 +51,11 @@ class SqliteSettingsRepository(SettingsRepository):
 
     def set_dockhand_settings(self, base_url: str, token: str) -> None:
         """Persist the Dockhand base URL and API token."""
+        logger.info(
+            "writing the Dockhand settings to %s (base_url=%s)",
+            self._db_path,
+            base_url,
+        )
         self._upsert(SETTINGS_KEY_DOCKHAND_BASE_URL, base_url)
         self._upsert(SETTINGS_KEY_DOCKHAND_API_TOKEN, token)
 

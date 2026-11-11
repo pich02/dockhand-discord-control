@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local SQLite data and agent memory
+data/
+.opencode/
+
+# Reflex frontend artifacts
+.web/
+.states/
+reflex.lock/
+
+# Crash dumps
+core.*

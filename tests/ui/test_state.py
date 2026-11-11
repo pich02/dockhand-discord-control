@@ -6,6 +6,14 @@ tested directly with injected fakes.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
+import pickle
+import threading
+from pathlib import Path
+
+import pytest
+
 from dockhand_discord_control.domain.models import (
     ChannelMapping,
     ContainerStatus,
@@ -109,6 +117,41 @@ class FakeSnapshotUseCase:
         return self._snapshot
 
 
+class FakeDiscordBridge:
+    """Fake for the Discord bridge lifecycle."""
+
+    def __init__(self, message: str = "Discord bot started.") -> None:
+        self._message = message
+        self.started: list[dict[str, str | None]] = []
+        self.stopped = False
+
+    def start(
+        self,
+        *,
+        token: str | None,
+        guild_id: str | None,
+        base_url: str,
+        api_token: str,
+        db_path: str,
+    ) -> tuple[bool, str]:
+        self.started.append(
+            {
+                "token": token,
+                "guild_id": guild_id,
+                "base_url": base_url,
+                "api_token": api_token,
+                "db_path": db_path,
+            }
+        )
+        return True, self._message
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def status(self) -> str:
+        return "Discord bot is running."
+
+
 def _environment(environment_id: str, name: str) -> DockhandEnvironment:
     return DockhandEnvironment(
         id=environment_id,
@@ -148,18 +191,180 @@ def test_load_settings_reads_from_repository() -> None:
 
 def test_save_settings_persists_to_repository() -> None:
     repo = FakeSettingsRepository()
-    state = AppState(settings_repo=repo)
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bot-token"
     state.discord_guild_id = "guild-1"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
     assert repo.saved_discord == "bot-token"
     assert repo.saved_discord_guild_id == "guild-1"
-    assert state.status_message == "Settings saved."
+    assert "Settings saved." in state.status_message
+
+
+def test_save_settings_starts_the_discord_bridge() -> None:
+    repo = FakeSettingsRepository()
+    bridge = FakeDiscordBridge()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=bridge,
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+    state.discord_bot_token = "bot-token"
+
+    asyncio.run(state.save_settings())
+
+    assert len(bridge.started) == 1
+    assert bridge.started[0]["token"] == "bot-token"
+    assert bridge.started[0]["base_url"] == "http://dockhand:8080"
+    assert "Discord bot started." in state.status_message
+
+
+def test_save_settings_reports_token_check_warning() -> None:
+    repo = FakeSettingsRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: "the Discord bot token was rejected",
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+    state.discord_bot_token = "bad-token"
+
+    asyncio.run(state.save_settings())
+
+    assert "Token check: the Discord bot token was rejected" in state.status_message
+
+
+def test_save_settings_reports_dockhand_connection_failure() -> None:
+    repo = FakeSettingsRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(exc=RuntimeError("connection refused")),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    asyncio.run(state.save_settings())
+
+    assert "Dockhand connection failed" in state.status_message
+    assert "connection refused" in state.status_message
+    # The settings are still persisted.
+    assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
+
+
+def test_save_settings_reports_persistence_failure() -> None:
+    class FailingRepository(FakeSettingsRepository):
+        def set_dockhand_settings(self, base_url: str, token: str) -> None:
+            raise RuntimeError("database is locked")
+
+    repo = FailingRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    asyncio.run(state.save_settings())
+
+    assert "Failed to save settings" in state.status_message
+    assert "database is locked" in state.status_message
+
+
+def test_save_settings_without_token_stops_the_bridge() -> None:
+    repo = FakeSettingsRepository()
+    bridge = FakeDiscordBridge()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=bridge,
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    asyncio.run(state.save_settings())
+
+    assert bridge.stopped
+    assert bridge.started == []
+    assert "no bot token configured" in state.status_message
+
+
+def test_save_settings_is_a_coroutine_handler() -> None:
+    assert inspect.iscoroutinefunction(AppState.save_settings.fn)
+    assert inspect.iscoroutinefunction(AppState.refresh_status.fn)
+    assert inspect.iscoroutinefunction(AppState.load_dashboard.fn)
+    assert inspect.iscoroutinefunction(AppState.load_mappings_page.fn)
+
+
+def test_save_settings_runs_the_dockhand_call_off_the_event_loop() -> None:
+    repo = FakeSettingsRepository()
+    threads: list[int] = []
+
+    class RecordingUseCase(FakeSnapshotUseCase):
+        def execute(self) -> Snapshot:
+            threads.append(threading.get_ident())
+            return super().execute()
+
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=RecordingUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = "http://dockhand:8080"
+    state.dockhand_api_token = "dockhand-secret"
+
+    asyncio.run(state.save_settings())
+
+    assert threads
+    assert threads[0] != threading.get_ident()
+
+
+def test_state_with_a_sqlite_repository_can_be_pickled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The state manager persists the state; the collaborators must not block it."""
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "app.sqlite"))
+    state = AppState()
+    state.load_settings()
+
+    restored = pickle.loads(pickle.dumps(state))
+
+    assert restored.dockhand_base_url == ""
+    # The collaborators are recreated on demand after unpickling.
+    assert restored._AppState__collaborators["settings_repo"] is None
+    assert restored._AppState__collaborators["discord_bridge"] is None
+
+
+def test_load_settings_reports_read_failure() -> None:
+    class FailingRepository(FakeSettingsRepository):
+        def get_dockhand_settings(self) -> tuple[str, str]:
+            raise RuntimeError("no such table: app_settings")
+
+    state = AppState(settings_repo=FailingRepository())
+
+    state.load_settings()
+
+    assert "Failed to load settings" in state.status_message
+    assert "no such table" in state.status_message
 
 
 def test_save_settings_validates_required_fields() -> None:
@@ -167,7 +372,7 @@ def test_save_settings_validates_required_fields() -> None:
     state = AppState(settings_repo=repo)
     state.dockhand_api_token = "dockhand-secret"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert repo.saved_dockhand is None
     assert repo.saved_discord is None
@@ -185,6 +390,36 @@ def test_settings_setter_methods_update_fields() -> None:
     assert state.dockhand_api_token == "dockhand-secret"
     assert state.discord_bot_token == "bot-token"
     assert state.discord_guild_id == "guild-123"
+
+
+def test_settings_setters_accept_null_values() -> None:
+    state = AppState()
+    state.set_dockhand_base_url(None)  # type: ignore[arg-type]
+    state.set_dockhand_api_token(None)  # type: ignore[arg-type]
+    state.set_discord_bot_token(None)  # type: ignore[arg-type]
+    state.set_discord_guild_id(None)  # type: ignore[arg-type]
+
+    assert state.dockhand_base_url == ""
+    assert state.dockhand_api_token == ""
+    assert state.discord_bot_token == ""
+    assert state.discord_guild_id == ""
+
+
+def test_save_settings_with_null_values_reports_instead_of_raising() -> None:
+    repo = FakeSettingsRepository()
+    state = AppState(
+        settings_repo=repo,
+        snapshot_use_case=FakeSnapshotUseCase(),
+        discord_bridge=FakeDiscordBridge(),
+        token_verifier=lambda _token: None,
+    )
+    state.dockhand_base_url = None  # type: ignore[assignment]
+    state.dockhand_api_token = None  # type: ignore[assignment]
+
+    asyncio.run(state.save_settings())
+
+    assert repo.saved_dockhand is None
+    assert "Dockhand base URL and API token are required." in state.status_message
 
 
 def test_save_mapping_creates_and_updates() -> None:
@@ -277,7 +512,7 @@ def test_load_dashboard_loads_settings_and_refreshes() -> None:
     use_case = FakeSnapshotUseCase(Snapshot(environments=[env], containers=[container]))
     state = AppState(settings_repo=repo, snapshot_use_case=use_case)
 
-    state.load_dashboard()
+    asyncio.run(state.load_dashboard())
 
     assert state.dockhand_base_url == "http://dockhand:8080"
     assert list(state.environments) == [env]
@@ -290,7 +525,7 @@ def test_load_dashboard_missing_config_does_not_request() -> None:
     use_case = FakeSnapshotUseCase()
     state = AppState(settings_repo=repo, snapshot_use_case=use_case)
 
-    state.load_dashboard()
+    asyncio.run(state.load_dashboard())
 
     assert "Configure Dockhand settings" in state.status_message
     assert not use_case.called
@@ -313,7 +548,7 @@ def test_load_mappings_page_loads_containers_and_mappings() -> None:
         snapshot_use_case=use_case,
     )
 
-    state.load_mappings_page()
+    asyncio.run(state.load_mappings_page())
 
     assert list(state.containers) == [container]
     assert list(state.mappings) == [
@@ -326,7 +561,7 @@ def test_load_mappings_page_missing_config_does_not_request() -> None:
     use_case = FakeSnapshotUseCase()
     state = AppState(settings_repo=repo, snapshot_use_case=use_case)
 
-    state.load_mappings_page()
+    asyncio.run(state.load_mappings_page())
 
     assert "Configure Dockhand settings" in state.status_message
     assert not use_case.called
@@ -338,7 +573,7 @@ def test_refresh_status_populates_lists() -> None:
     use_case = FakeSnapshotUseCase(Snapshot(environments=[env], containers=[container]))
     state = AppState(snapshot_use_case=use_case)
 
-    state.refresh_status()
+    asyncio.run(state.refresh_status())
 
     assert list(state.environments) == [env]
     assert list(state.containers) == [container]
@@ -349,7 +584,7 @@ def test_refresh_status_populates_lists() -> None:
 def test_refresh_status_reports_failure_without_crashing() -> None:
     state = AppState(snapshot_use_case=FakeSnapshotUseCase(exc=RuntimeError("down")))
 
-    state.refresh_status()
+    asyncio.run(state.refresh_status())
 
     assert list(state.environments) == []
     assert list(state.containers) == []

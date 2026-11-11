@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dockhand_discord_control.persistence.database import get_connection, init_db
+
+
+def test_get_connection_creates_missing_parent_directory(tmp_path: Path) -> None:
+    db_path = tmp_path / "data" / "app.sqlite"
+    conn = get_connection(str(db_path))
+    try:
+        init_db(conn)
+        assert db_path.exists()
+    finally:
+        conn.close()
 
 
 def test_init_db_creates_app_settings_and_channel_mappings() -> None:

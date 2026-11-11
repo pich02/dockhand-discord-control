@@ -111,3 +111,58 @@ docker compose logs -f
 
 Configuration is read from `.env` (docker compose) or the environment (local run).
 Runtime overrides may also be stored in SQLite via the Reflex UI.
+
+### Saving settings from the UI
+
+Pressing **Save settings** on `/settings`:
+
+1. persists the Dockhand and Discord values in SQLite (the `data/` directory is
+   created automatically),
+2. checks that the Dockhand API answers with the saved credentials,
+3. starts, restarts or stops the Discord bot so it matches the saved token.
+
+The outcome is shown as one status message, for example
+`Settings saved. Dockhand reachable (2 environment(s), 5 container(s)). Discord bot started.`
+Failures are reported in the same place instead of failing silently; the current
+bot state is also shown on the dashboard.
+
+### Checking the save flow end to end
+
+`scripts/e2e_settings_save.py` drives a running backend over its real
+Socket.IO transport (the same one the browser uses), clicks the equivalent of
+the "Save settings" button and asserts that the status message arrives and the
+values reach SQLite:
+
+```bash
+# terminal 1
+DB_PATH=./data/e2e-app.sqlite reflex run --env dev --backend-only \
+    --backend-port 8000 --backend-host 127.0.0.1
+
+# terminal 2
+uv run python scripts/e2e_settings_save.py
+```
+
+It prints the status message, the bot status, the persisted rows and a
+`RESULT: PASS`/`FAIL` line. Use a dedicated database (as above): the check
+replaces the settings it finds and restores them when it is done.
+
+### Following the save flow in the logs
+
+The app logs the save flow at `INFO` level, so the terminal shows exactly
+where a save stops:
+
+```
+frontend connected (sid=…)                       # the browser reached the backend
+frontend event: set_dockhand_base_url            # an input changed
+frontend event: save_settings                    # the button was clicked
+save_settings called: base_url set=True, …       # the handler ran
+save_settings: writing the settings to ./data/app.sqlite
+writing the Dockhand settings to ./data/app.sqlite (base_url=http://…)
+save_settings: the settings were persisted
+```
+
+If there is no `frontend connected` line, the browser never reached the
+backend — in dev mode the UI is served by the frontend dev server
+(`http://localhost:3000`), not by the backend port. In production
+(`--env prod --single-port`) the UI and the API share one port.
+
