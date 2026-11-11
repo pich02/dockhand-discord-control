@@ -131,6 +131,12 @@ Dependency rule:
 - Settings page: Dockhand URL + token, Discord bot token / webhook, platform choice.
 - Mappings page: choose container visibility (enabled), choose Discord channel per
   container.
+- Event handlers that talk to the network or to the bot thread are `async` and
+  offload that work to worker threads, so the Reflex event loop stays responsive.
+- The collaborators (repositories, bridge, token check) live in a single
+  `self.__collaborators` attribute that `__getstate__` removes: the Reflex state
+  manager pickles the state, and a live SQLite connection or a thread lock is
+  not picklable. The lazy accessors rebuild the collaborators after unpickling.
 
 ### 4.7 Discord bridge lifecycle (`ui/bridge.py`)
 
