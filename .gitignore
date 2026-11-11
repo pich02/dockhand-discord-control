@@ -227,3 +227,6 @@ data/
 .web/
 .states/
 reflex.lock/
+
+# Crash dumps
+core.*
