@@ -12,7 +12,12 @@ asserts that
 
 The script is destructive for the database it writes to, so it defaults to a
 dedicated database (``.data/e2e-app.sqlite``) and restores the rows of the
-``app_settings`` table when it is done.
+``app_settings`` table when it is done.  If the previous rows cannot be read
+the script aborts without touching the database, and a database that did not
+exist before is removed again afterwards.
+
+The stored Discord bot token is cleared for the run (and restored afterwards)
+unless ``--keep-token`` is given, so the check never starts the real bot.
 
 Usage:
 
@@ -49,15 +54,26 @@ STATE_NAME = (
 STATUS_TIMEOUT = 60.0
 
 
-def read_settings(db_path: str) -> dict[str, str]:
-    """Return the ``app_settings`` rows of *db_path* (empty when absent)."""
+def read_settings(db_path: str) -> dict[str, str] | None:
+    """Return the ``app_settings`` rows of *db_path*.
+
+    Returns an empty mapping when the database or the table does not exist and
+    ``None`` when the database cannot be read at all (a locked or unreadable
+    database).  The caller must not write anything when the result is
+    ``None``: the previous rows are unknown, so they cannot be restored.
+    """
     if not Path(db_path).exists():
         return {}
     connection = sqlite3.connect(db_path)
     try:
-        rows = connection.execute("SELECT key, value FROM app_settings").fetchall()
+        try:
+            rows = connection.execute("SELECT key, value FROM app_settings").fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc):
+                return {}
+            raise
     except sqlite3.Error:
-        return {}
+        return None
     finally:
         connection.close()
     return {str(key): str(value) for key, value in rows}
@@ -68,6 +84,10 @@ def write_settings(db_path: str, rows: dict[str, str]) -> None:
     connection = sqlite3.connect(db_path)
     try:
         with connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS app_settings ("
+                "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
             connection.execute("DELETE FROM app_settings")
             connection.executemany(
                 "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
@@ -158,8 +178,11 @@ async def run(backend: str, db_path: str, base_url: str, clear_token: bool) -> i
 
     try:
         rows = read_settings(db_path)
-    except sqlite3.Error as exc:
+    except sqlite3.Error as exc:  # pragma: no cover - defensive
         print("PERSISTED ROWS: unavailable:", exc)
+        rows = {}
+    if rows is None:
+        print("PERSISTED ROWS: unavailable")
         rows = {}
     print("PERSISTED ROWS:", json.dumps(rows))
     persisted = rows.get("dockhand_base_url") == base_url
@@ -193,9 +216,13 @@ def main() -> int:
         help="Dockhand URL used in the test; the default port is closed on purpose.",
     )
     parser.add_argument(
-        "--clear-token",
+        "--keep-token",
         action="store_true",
-        help="Also clear the stored Discord bot token (it is not set otherwise).",
+        help=(
+            "Keep the stored Discord bot token. By default it is cleared for "
+            "the run (and restored afterwards) so the check never starts the "
+            "real Discord bot."
+        ),
     )
     parser.add_argument(
         "--keep-settings",
@@ -204,12 +231,26 @@ def main() -> int:
     )
     args = parser.parse_args()
     db_path = str(Path(args.db_path))
+    existed = Path(db_path).exists()
     original = read_settings(db_path)
+    if original is None:
+        print("RESULT: FAIL")
+        print(
+            f"ERROR: the settings of {db_path} could not be read; nothing was changed."
+        )
+        return 1
     try:
-        return asyncio.run(run(args.backend, db_path, args.base_url, args.clear_token))
+        return asyncio.run(
+            run(args.backend, db_path, args.base_url, not args.keep_token)
+        )
     finally:
         if not args.keep_settings:
-            write_settings(db_path, original)
+            if existed:
+                write_settings(db_path, original)
+            else:
+                # The database did not exist before the check: remove the file
+                # the check created instead of leaving an empty database behind.
+                Path(db_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

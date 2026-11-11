@@ -41,6 +41,7 @@ _COLLABORATOR_KEYS = (
     "snapshot_use_case",
     "discord_bridge",
     "token_verifier",
+    "owns_snapshot_use_case",
 )
 
 
@@ -148,16 +149,17 @@ class AppState(rx.State):
         # Dependency-injected collaborators.  They live in a single instance
         # attribute that is not a class field, so Reflex does not treat them
         # as state vars and does not try to serialize them.
-        self.__collaborators: dict[str, Any] = {
-            "settings_repo": settings_repo,
-            "mapping_repo": mapping_repo,
-            "snapshot_use_case": snapshot_use_case,
-            "discord_bridge": discord_bridge,
-            "token_verifier": token_verifier,
+        self.__collaborators: dict[str, Any] = dict.fromkeys(_COLLABORATOR_KEYS)
+        self.__collaborators.update(
+            settings_repo=settings_repo,
+            mapping_repo=mapping_repo,
+            snapshot_use_case=snapshot_use_case,
+            discord_bridge=discord_bridge,
+            token_verifier=token_verifier,
             # An injected use case is owned by the caller and must not be
             # replaced; a lazily built one is rebuilt after a save.
-            "owns_snapshot_use_case": snapshot_use_case is None,
-        }
+            owns_snapshot_use_case=snapshot_use_case is None,
+        )
 
     # -- collaborators ----------------------------------------------------
 
@@ -170,11 +172,9 @@ class AppState(rx.State):
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore the state and drop the collaborators (recreated lazily)."""
         super().__setstate__(state)
-        self.__collaborators = {
-            **{key: None for key in _COLLABORATOR_KEYS},
-            # The restored state owns its Dockhand client again.
-            "owns_snapshot_use_case": True,
-        }
+        self.__collaborators = dict.fromkeys(_COLLABORATOR_KEYS)
+        # The restored state owns its Dockhand client again.
+        self.__collaborators["owns_snapshot_use_case"] = True
 
     def _settings_repo(self) -> _SettingsRepository:
         repo = self.__collaborators["settings_repo"]
