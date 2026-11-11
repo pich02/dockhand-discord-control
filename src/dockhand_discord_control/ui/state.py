@@ -28,6 +28,18 @@ from dockhand_discord_control.domain.models import (
 
 logger = logging.getLogger(__name__)
 
+#: Instance attributes that hold the injected collaborators.  They contain
+#: SQLite connections, locks and threads, which cannot be pickled, so they are
+#: left out of the serialized state and recreated on demand.
+_COLLABORATOR_ATTRS = (
+    "_AppState__settings_repo",
+    "_AppState__mapping_repo",
+    "_AppState__snapshot_use_case",
+    "_AppState__owns_snapshot_use_case",
+    "_AppState__discord_bridge",
+    "_AppState__token_verifier",
+)
+
 
 class _SettingsRepository(Protocol):
     """Read/write settings repository used by the UI.
@@ -141,6 +153,21 @@ class AppState(rx.State):
         self.__token_verifier = token_verifier
 
     # -- collaborators ----------------------------------------------------
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return the serializable state, without the collaborators."""
+        state = dict(super().__getstate__())
+        for name in _COLLABORATOR_ATTRS:
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore the state and drop the collaborators (recreated lazily)."""
+        super().__setstate__(state)
+        for name in _COLLABORATOR_ATTRS:
+            setattr(self, name, None)
+        # The restored state owns its Dockhand client again.
+        setattr(self, "_AppState__owns_snapshot_use_case", True)
 
     def _settings_repo(self) -> _SettingsRepository:
         repo = self.__settings_repo

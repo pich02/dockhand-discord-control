@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import pickle
 import threading
+from pathlib import Path
+
+import pytest
 
 from dockhand_discord_control.domain.models import (
     ChannelMapping,
@@ -332,6 +336,21 @@ def test_save_settings_runs_the_dockhand_call_off_the_event_loop() -> None:
 
     assert threads
     assert threads[0] != threading.get_ident()
+
+
+def test_state_with_a_sqlite_repository_can_be_pickled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The state manager persists the state; the collaborators must not block it."""
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "app.sqlite"))
+    state = AppState()
+    state.load_settings()
+
+    restored = pickle.loads(pickle.dumps(state))
+
+    assert restored.dockhand_base_url == ""
+    # The collaborators are recreated on demand after unpickling.
+    assert restored._AppState__settings_repo is None
 
 
 def test_load_settings_reports_read_failure() -> None:
