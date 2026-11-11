@@ -25,18 +25,24 @@ class FakeSettingsRepository:
         base_url: str = "",
         token: str = "",
         discord_token: str | None = None,
+        discord_guild_id: str | None = None,
     ) -> None:
         self._base_url = base_url
         self._token = token
         self._discord_token = discord_token
+        self._discord_guild_id = discord_guild_id
         self.saved_dockhand: tuple[str, str] | None = None
         self.saved_discord: str | None = None
+        self.saved_discord_guild_id: str | None = None
 
     def get_dockhand_settings(self) -> tuple[str, str]:
         return self._base_url, self._token
 
     def get_discord_token(self) -> str | None:
         return self._discord_token
+
+    def get_discord_guild_id(self) -> str | None:
+        return self._discord_guild_id
 
     def set_dockhand_settings(self, base_url: str, token: str) -> None:
         self.saved_dockhand = (base_url, token)
@@ -46,6 +52,10 @@ class FakeSettingsRepository:
     def set_discord_token(self, token: str | None) -> None:
         self.saved_discord = token
         self._discord_token = token
+
+    def set_discord_guild_id(self, guild_id: str | None) -> None:
+        self.saved_discord_guild_id = guild_id
+        self._discord_guild_id = guild_id
 
 
 class FakeMappingRepository:
@@ -123,6 +133,7 @@ def test_load_settings_reads_from_repository() -> None:
         base_url="http://dockhand:8080",
         token="dockhand-secret",
         discord_token="bot-token",
+        discord_guild_id="guild-1",
     )
     state = AppState(settings_repo=repo)
 
@@ -131,6 +142,7 @@ def test_load_settings_reads_from_repository() -> None:
     assert state.dockhand_base_url == "http://dockhand:8080"
     assert state.dockhand_api_token == "dockhand-secret"
     assert state.discord_bot_token == "bot-token"
+    assert state.discord_guild_id == "guild-1"
     assert state.status_message == "Settings loaded."
 
 
@@ -140,11 +152,13 @@ def test_save_settings_persists_to_repository() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bot-token"
+    state.discord_guild_id = "guild-1"
 
     state.save_settings()
 
     assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
     assert repo.saved_discord == "bot-token"
+    assert repo.saved_discord_guild_id == "guild-1"
     assert state.status_message == "Settings saved."
 
 

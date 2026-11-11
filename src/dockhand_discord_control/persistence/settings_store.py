@@ -8,6 +8,7 @@ from dockhand_discord_control.domain.ports import SettingsRepository
 
 from .database import (
     SETTINGS_KEY_DISCORD_BOT_TOKEN,
+    SETTINGS_KEY_DISCORD_GUILD_ID,
     SETTINGS_KEY_DOCKHAND_API_TOKEN,
     SETTINGS_KEY_DOCKHAND_BASE_URL,
     get_connection,
@@ -40,6 +41,11 @@ class SqliteSettingsRepository(SettingsRepository):
         value = self._setting(SETTINGS_KEY_DISCORD_BOT_TOKEN)
         return value or None
 
+    def get_discord_guild_id(self) -> str | None:
+        """Return the Discord guild ID, if configured."""
+        value = self._setting(SETTINGS_KEY_DISCORD_GUILD_ID)
+        return value or None
+
     def set_dockhand_settings(self, base_url: str, token: str) -> None:
         """Persist the Dockhand base URL and API token."""
         self._upsert(SETTINGS_KEY_DOCKHAND_BASE_URL, base_url)
@@ -55,6 +61,17 @@ class SqliteSettingsRepository(SettingsRepository):
                 )
         else:
             self._upsert(SETTINGS_KEY_DISCORD_BOT_TOKEN, token)
+
+    def set_discord_guild_id(self, guild_id: str | None) -> None:
+        """Persist (or clear, when ``None``) the Discord guild ID."""
+        if guild_id is None or not guild_id:
+            with self._conn:
+                self._conn.execute(
+                    "DELETE FROM app_settings WHERE key = ?",
+                    (SETTINGS_KEY_DISCORD_GUILD_ID,),
+                )
+        else:
+            self._upsert(SETTINGS_KEY_DISCORD_GUILD_ID, guild_id)
 
     def _setting(self, key: str) -> str:
         row = self._conn.execute(

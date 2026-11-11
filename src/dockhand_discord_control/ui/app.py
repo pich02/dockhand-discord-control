@@ -20,6 +20,7 @@ from dockhand_discord_control.domain.use_cases import (
     StopContainerUseCase,
 )
 from dockhand_discord_control.persistence import (
+    Settings,
     SqliteChannelMappingRepository,
     SqliteSettingsRepository,
 )
@@ -51,7 +52,8 @@ def _start_discord_bridge() -> None:
     keeps running.
     """
     try:
-        settings_repo = SqliteSettingsRepository()
+        db_path = Settings().db_path
+        settings_repo = SqliteSettingsRepository(db_path)
         token = settings_repo.get_discord_token()
     except Exception as exc:  # pragma: no cover - infrastructure failure
         logger.warning("Discord bridge skipped: cannot read settings: %s", exc)
@@ -62,8 +64,8 @@ def _start_discord_bridge() -> None:
     try:
         bot = DiscordBot(
             token=token,
-            handlers=_build_command_handlers(settings_repo),
-            guild_id=_discord_guild_id(),
+            handlers=_build_command_handlers(settings_repo, db_path),
+            guild_id=settings_repo.get_discord_guild_id(),
         )
         thread = threading.Thread(
             target=bot.run,
@@ -78,22 +80,14 @@ def _start_discord_bridge() -> None:
 
 def _build_command_handlers(
     settings_repo: SqliteSettingsRepository,
+    db_path: str = "./data/app.sqlite",
 ) -> DiscordCommandHandlers:
     base_url, api_token = settings_repo.get_dockhand_settings()
     client = DockhandApiClient(base_url=base_url, api_token=api_token)
-    mapping_repo = SqliteChannelMappingRepository()
+    mapping_repo = SqliteChannelMappingRepository(db_path)
     return DiscordCommandHandlers(
         snapshot_use_case=SnapshotUseCase(client),
         start_use_case=StartContainerUseCase(client, mapping_repo),
         stop_use_case=StopContainerUseCase(client, mapping_repo),
         mapping_repo=mapping_repo,
     )
-
-
-def _discord_guild_id() -> str | None:
-    try:
-        from dockhand_discord_control.persistence.config import Settings
-
-        return Settings().discord_guild_id or None
-    except Exception:  # pragma: no cover - configuration failure
-        return None

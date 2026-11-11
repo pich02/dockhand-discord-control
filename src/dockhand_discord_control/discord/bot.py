@@ -143,7 +143,7 @@ if _discord is not None and _ext_commands is not None:
         async def setup_hook(self) -> None:
             self.register_commands()
             # TODO: slash-command registration strategy is an open item.
-            # When DISCORD_GUILD_ID is set, sync guild-scoped so command
+            # When a guild ID is configured, sync guild-scoped so command
             # updates appear instantly; otherwise sync globally (global
             # commands can take up to an hour to propagate to all guilds).
             if self._guild_id is not None:

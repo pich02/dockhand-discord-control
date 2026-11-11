@@ -111,9 +111,10 @@ Dependency rule:
 
 ### 4.5 Config
 
-- `pydantic-settings` backed by environment variables
-  (e.g. `DOCKHAND_BASE_URL`, `DOCKHAND_API_TOKEN`, `DISCORD_BOT_TOKEN`) with
-  runtime overrides persisted in SQLite.
+- `Settings` (pydantic-settings) provides only the SQLite database path
+  (`DB_PATH`); all Dockhand and Discord settings (base URL, API token, bot token,
+  guild ID) are configured through the web UI at `/settings` and persisted in
+  SQLite.
 
 ### 4.6 Reflex UI (web app)
 
