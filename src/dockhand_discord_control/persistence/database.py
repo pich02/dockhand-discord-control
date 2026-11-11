@@ -16,6 +16,7 @@ __all__ = ["get_connection", "init_db"]
 SETTINGS_KEY_DOCKHAND_BASE_URL = "dockhand_base_url"
 SETTINGS_KEY_DOCKHAND_API_TOKEN = "dockhand_api_token"
 SETTINGS_KEY_DISCORD_BOT_TOKEN = "discord_bot_token"
+SETTINGS_KEY_DISCORD_GUILD_ID = "discord_guild_id"
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:

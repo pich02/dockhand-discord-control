@@ -39,9 +39,13 @@ class _SettingsRepository(Protocol):
 
     def get_discord_token(self) -> str | None: ...
 
+    def get_discord_guild_id(self) -> str | None: ...
+
     def set_dockhand_settings(self, base_url: str, token: str) -> None: ...
 
     def set_discord_token(self, token: str | None) -> None: ...
+
+    def set_discord_guild_id(self, guild_id: str | None) -> None: ...
 
 
 class _ChannelMappingRepository(Protocol):
@@ -114,9 +118,12 @@ class AppState(rx.State):
     def _settings_repo(self) -> _SettingsRepository:
         repo = self.__settings_repo
         if repo is None:
-            from dockhand_discord_control.persistence import SqliteSettingsRepository
+            from dockhand_discord_control.persistence import (
+                Settings,
+                SqliteSettingsRepository,
+            )
 
-            repo = SqliteSettingsRepository()
+            repo = SqliteSettingsRepository(Settings().db_path)
             self.__settings_repo = repo
         return repo
 
@@ -124,10 +131,11 @@ class AppState(rx.State):
         repo = self.__mapping_repo
         if repo is None:
             from dockhand_discord_control.persistence import (
+                Settings,
                 SqliteChannelMappingRepository,
             )
 
-            repo = SqliteChannelMappingRepository()
+            repo = SqliteChannelMappingRepository(Settings().db_path)
             self.__mapping_repo = repo
         return repo
 
@@ -155,6 +163,7 @@ class AppState(rx.State):
         self.dockhand_base_url = base_url
         self.dockhand_api_token = token
         self.discord_bot_token = repo.get_discord_token() or ""
+        self.discord_guild_id = repo.get_discord_guild_id() or ""
         self.status_message = "Settings loaded."
 
     def save_settings(self) -> None:
@@ -165,7 +174,27 @@ class AppState(rx.State):
         repo = self._settings_repo()
         repo.set_dockhand_settings(self.dockhand_base_url, self.dockhand_api_token)
         repo.set_discord_token(self.discord_bot_token or None)
+        repo.set_discord_guild_id(self.discord_guild_id or None)
+        self.__snapshot_use_case = None
         self.status_message = "Settings saved."
+
+    def load_dashboard(self) -> None:
+        """Load settings then refresh the status snapshot for the dashboard."""
+        self.load_settings()
+        if not self.dockhand_base_url or not self.dockhand_api_token:
+            self.status_message = "Configure Dockhand settings to load status."
+            return
+        self.refresh_status()
+
+    def load_mappings_page(self) -> None:
+        """Load settings, ensure containers are available, then load mappings."""
+        self.load_settings()
+        if not self.dockhand_base_url or not self.dockhand_api_token:
+            self.status_message = "Configure Dockhand settings to load mappings."
+            return
+        if not self.containers:
+            self.refresh_status()
+        self.load_mappings()
 
     def set_dockhand_base_url(self, value: str) -> None:
         self.dockhand_base_url = value

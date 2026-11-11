@@ -7,9 +7,19 @@ import reflex as rx
 from dockhand_discord_control.ui.state import AppState
 
 
+def _navbar() -> rx.Component:
+    return rx.hstack(
+        rx.link("Dashboard", href="/"),
+        rx.link("Settings", href="/settings"),
+        rx.link("Mappings", href="/mappings"),
+        spacing="4",
+    )
+
+
 def dashboard_page() -> rx.Component:
     """Read-only status snapshot of Dockhand environments and containers."""
     return rx.container(
+        _navbar(),
         rx.heading("Dashboard"),
         rx.text(
             "Environments and containers managed by the Dockhand server.",
@@ -75,6 +85,7 @@ def dashboard_page() -> rx.Component:
 def settings_page() -> rx.Component:
     """Edit and save Dockhand and Discord settings."""
     return rx.container(
+        _navbar(),
         rx.heading("Settings"),
         rx.text(
             "Configure the Dockhand server and Discord bot connection.",
@@ -124,6 +135,7 @@ def settings_page() -> rx.Component:
 def mappings_page() -> rx.Component:
     """Per-container visibility and channel mapping."""
     return rx.container(
+        _navbar(),
         rx.heading("Mappings"),
         rx.text(
             "Map containers to Discord channels and toggle their visibility.",
