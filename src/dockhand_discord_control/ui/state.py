@@ -11,6 +11,7 @@ not treat them as serializable state vars.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, Protocol, TypedDict
@@ -209,8 +210,8 @@ class AppState(rx.State):
 
     def load_settings(self) -> None:
         """Load dockhand and Discord settings from the repository."""
-        repo = self._settings_repo()
         try:
+            repo = self._settings_repo()
             base_url, token = repo.get_dockhand_settings()
             discord_token = repo.get_discord_token() or ""
             guild_id = repo.get_discord_guild_id() or ""
@@ -224,18 +225,25 @@ class AppState(rx.State):
         self.discord_guild_id = guild_id
         self.status_message = "Settings loaded."
 
-    def save_settings(self) -> None:
-        """Persist dockhand and Discord settings, then verify the connections."""
+    async def save_settings(self) -> None:
+        """Persist dockhand and Discord settings, then verify the connections.
+
+        The handler is asynchronous because the verification steps talk to the
+        network and to the Discord bot thread; they run in worker threads so
+        the Reflex event loop stays responsive.
+        """
         base_url = self.dockhand_base_url.strip()
         api_token = self.dockhand_api_token.strip()
+        discord_token = self.discord_bot_token.strip()
+        guild_id = self.discord_guild_id.strip()
         if not base_url or not api_token:
             self.status_message = "Dockhand base URL and API token are required."
             return
-        repo = self._settings_repo()
         try:
+            repo = self._settings_repo()
             repo.set_dockhand_settings(base_url, api_token)
-            repo.set_discord_token(self.discord_bot_token.strip() or None)
-            repo.set_discord_guild_id(self.discord_guild_id.strip() or None)
+            repo.set_discord_token(discord_token or None)
+            repo.set_discord_guild_id(guild_id or None)
         except Exception as exc:
             logger.exception("save_settings failed")
             self.status_message = f"Failed to save settings: {exc}"
@@ -245,9 +253,14 @@ class AppState(rx.State):
         # The Dockhand client is rebuilt from the saved values.
         if self.__owns_snapshot_use_case:
             self.__snapshot_use_case = None
-        messages = ["Settings saved.", self._check_dockhand_connection()]
-        messages.append(self._apply_discord_settings())
-        self.status_message = " ".join(messages)
+        dockhand_message = await asyncio.to_thread(self._check_dockhand_connection)
+        discord_message, bot_status = await asyncio.to_thread(
+            self._apply_discord_settings, discord_token, guild_id
+        )
+        self.discord_bot_status = bot_status
+        self.status_message = " ".join(
+            ["Settings saved.", dockhand_message, discord_message]
+        )
 
     def _check_dockhand_connection(self) -> str:
         """Verify the Dockhand API answers with the saved credentials."""
@@ -261,17 +274,19 @@ class AppState(rx.State):
             f"{len(snapshot.containers)} container(s))."
         )
 
-    def _apply_discord_settings(self) -> str:
-        """Start, restart or stop the Discord bridge to match the settings."""
-        token = self.discord_bot_token.strip()
+    def _apply_discord_settings(self, token: str, guild_id: str) -> tuple[str, str]:
+        """Start, restart or stop the Discord bridge to match the settings.
+
+        Returns the message for the status line and the current bot status.
+        Runs in a worker thread, so it must not touch Reflex state vars.
+        """
         bridge = self._discord_bridge()
         if not token:
             try:
                 bridge.stop()
             except Exception as exc:  # pragma: no cover - shutdown best effort
                 logger.warning("Could not stop the Discord bot: %s", exc)
-            self.discord_bot_status = bridge.status()
-            return "Discord bot not started: no bot token configured."
+            return "Discord bot not started: no bot token configured.", bridge.status()
         try:
             warning = self._token_verifier()(token)
         except Exception as exc:
@@ -280,30 +295,29 @@ class AppState(rx.State):
         try:
             _started, message = bridge.start(
                 token=token,
-                guild_id=self.discord_guild_id.strip() or None,
+                guild_id=guild_id or None,
                 base_url=self.dockhand_base_url,
                 api_token=self.dockhand_api_token,
                 db_path=self._db_path(),
             )
         except Exception as exc:
             logger.exception("Could not start the Discord bot")
-            self.discord_bot_status = f"Discord bot failed to start: {exc}"
-            return self.discord_bot_status
-        self.discord_bot_status = bridge.status()
+            return f"Discord bot failed to start: {exc}", f"Discord bot failed: {exc}"
+        status = bridge.status()
         if warning:
-            return f"{message} Token check: {warning}."
-        return message
+            return f"{message} Token check: {warning}.", status
+        return message, status
 
-    def load_dashboard(self) -> None:
+    async def load_dashboard(self) -> None:
         """Load settings then refresh the status snapshot for the dashboard."""
         self.load_settings()
         self.discord_bot_status = self._discord_bridge().status()
         if not self.dockhand_base_url or not self.dockhand_api_token:
             self.status_message = "Configure Dockhand settings to load status."
             return
-        self.refresh_status()
+        await self.refresh_status()
 
-    def load_mappings_page(self) -> None:
+    async def load_mappings_page(self) -> None:
         """Load settings, ensure containers are available, then load mappings."""
         self.load_settings()
         self.discord_bot_status = self._discord_bridge().status()
@@ -311,7 +325,7 @@ class AppState(rx.State):
             self.status_message = "Configure Dockhand settings to load mappings."
             return
         if not self.containers:
-            self.refresh_status()
+            await self.refresh_status()
         self.load_mappings()
 
     def set_dockhand_base_url(self, value: str) -> None:
@@ -330,9 +344,9 @@ class AppState(rx.State):
 
     def load_mappings(self) -> None:
         """Load all channel mappings for the known containers."""
-        repo = self._mapping_repo()
         loaded: list[_Mapping] = []
         try:
+            repo = self._mapping_repo()
             for container in self.containers:
                 for mapping in repo.mappings_for_container(container.name):
                     loaded.append(
@@ -351,8 +365,8 @@ class AppState(rx.State):
 
     def save_mapping(self, container_name: str, channel_id: str, enabled: bool) -> None:
         """Upsert a channel mapping and refresh the in-state list."""
-        repo = self._mapping_repo()
         try:
+            repo = self._mapping_repo()
             repo.add_mapping(
                 ChannelMapping(
                     container_name=container_name,
@@ -371,7 +385,6 @@ class AppState(rx.State):
 
     def toggle_mapping(self, container_name: str, channel_id: str) -> None:
         """Flip the enabled flag of a channel mapping."""
-        repo = self._mapping_repo()
         new_enabled = False
         found = False
         updated: list[_Mapping] = []
@@ -397,6 +410,7 @@ class AppState(rx.State):
             )
             return
         try:
+            repo = self._mapping_repo()
             repo.set_enabled(channel_id, new_enabled)
         except Exception as exc:
             logger.exception("toggle_mapping failed")
@@ -431,16 +445,22 @@ class AppState(rx.State):
 
     # -- status -----------------------------------------------------------
 
-    def refresh_status(self) -> None:
-        """Refresh the environments/containers snapshot via the use case."""
+    async def refresh_status(self) -> None:
+        """Refresh the environments/containers snapshot via the use case.
+
+        The Dockhand call is a network request, so it runs in a worker thread
+        to keep the Reflex event loop responsive.
+        """
         try:
-            snapshot = self._snapshot_use_case().execute()
+            snapshot = await asyncio.to_thread(self._snapshot_use_case().execute)
         except Exception as exc:  # keep the UI alive on adapter failure
             logger.exception("refresh_status failed")
             self.status_message = f"Failed to refresh status: {exc}"
+            self.discord_bot_status = self._discord_bridge().status()
             return
         self.environments = list(snapshot.environments)
         self.containers = list(snapshot.containers)
+        self.discord_bot_status = self._discord_bridge().status()
         self.status_message = (
             f"Loaded {len(snapshot.environments)} environment(s), "
             f"{len(snapshot.containers)} container(s)."

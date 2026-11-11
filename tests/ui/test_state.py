@@ -6,6 +6,8 @@ tested directly with injected fakes.
 
 from __future__ import annotations
 
+import asyncio
+
 from dockhand_discord_control.domain.models import (
     ChannelMapping,
     ContainerStatus,
@@ -194,7 +196,7 @@ def test_save_settings_persists_to_repository() -> None:
     state.discord_bot_token = "bot-token"
     state.discord_guild_id = "guild-1"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
     assert repo.saved_discord == "bot-token"
@@ -215,7 +217,7 @@ def test_save_settings_starts_the_discord_bridge() -> None:
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bot-token"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert len(bridge.started) == 1
     assert bridge.started[0]["token"] == "bot-token"
@@ -235,7 +237,7 @@ def test_save_settings_reports_token_check_warning() -> None:
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bad-token"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert "Token check: the Discord bot token was rejected" in state.status_message
 
@@ -251,7 +253,7 @@ def test_save_settings_reports_dockhand_connection_failure() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert "Dockhand connection failed" in state.status_message
     assert "connection refused" in state.status_message
@@ -274,7 +276,7 @@ def test_save_settings_reports_persistence_failure() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert "Failed to save settings" in state.status_message
     assert "database is locked" in state.status_message
@@ -292,7 +294,7 @@ def test_save_settings_without_token_stops_the_bridge() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert bridge.stopped
     assert bridge.started == []
@@ -317,7 +319,7 @@ def test_save_settings_validates_required_fields() -> None:
     state = AppState(settings_repo=repo)
     state.dockhand_api_token = "dockhand-secret"
 
-    state.save_settings()
+    asyncio.run(state.save_settings())
 
     assert repo.saved_dockhand is None
     assert repo.saved_discord is None
@@ -427,7 +429,7 @@ def test_load_dashboard_loads_settings_and_refreshes() -> None:
     use_case = FakeSnapshotUseCase(Snapshot(environments=[env], containers=[container]))
     state = AppState(settings_repo=repo, snapshot_use_case=use_case)
 
-    state.load_dashboard()
+    asyncio.run(state.load_dashboard())
 
     assert state.dockhand_base_url == "http://dockhand:8080"
     assert list(state.environments) == [env]
@@ -440,7 +442,7 @@ def test_load_dashboard_missing_config_does_not_request() -> None:
     use_case = FakeSnapshotUseCase()
     state = AppState(settings_repo=repo, snapshot_use_case=use_case)
 
-    state.load_dashboard()
+    asyncio.run(state.load_dashboard())
 
     assert "Configure Dockhand settings" in state.status_message
     assert not use_case.called
@@ -463,7 +465,7 @@ def test_load_mappings_page_loads_containers_and_mappings() -> None:
         snapshot_use_case=use_case,
     )
 
-    state.load_mappings_page()
+    asyncio.run(state.load_mappings_page())
 
     assert list(state.containers) == [container]
     assert list(state.mappings) == [
@@ -476,7 +478,7 @@ def test_load_mappings_page_missing_config_does_not_request() -> None:
     use_case = FakeSnapshotUseCase()
     state = AppState(settings_repo=repo, snapshot_use_case=use_case)
 
-    state.load_mappings_page()
+    asyncio.run(state.load_mappings_page())
 
     assert "Configure Dockhand settings" in state.status_message
     assert not use_case.called
@@ -488,7 +490,7 @@ def test_refresh_status_populates_lists() -> None:
     use_case = FakeSnapshotUseCase(Snapshot(environments=[env], containers=[container]))
     state = AppState(snapshot_use_case=use_case)
 
-    state.refresh_status()
+    asyncio.run(state.refresh_status())
 
     assert list(state.environments) == [env]
     assert list(state.containers) == [container]
@@ -499,7 +501,7 @@ def test_refresh_status_populates_lists() -> None:
 def test_refresh_status_reports_failure_without_crashing() -> None:
     state = AppState(snapshot_use_case=FakeSnapshotUseCase(exc=RuntimeError("down")))
 
-    state.refresh_status()
+    asyncio.run(state.refresh_status())
 
     assert list(state.environments) == []
     assert list(state.containers) == []

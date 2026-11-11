@@ -23,6 +23,7 @@ class FakeBot:
         self.handlers = handlers
         self.guild_id = guild_id
         self.logged_in = threading.Event()
+        self.closed = False
         self._stop: asyncio.Event | None = None
         FakeBot.instances.append(self)
 
@@ -33,8 +34,17 @@ class FakeBot:
         await self._stop.wait()
 
     async def close(self) -> None:
+        self.closed = True
         if self._stop is not None:
             self._stop.set()
+
+
+class FailingBot(FakeBot):
+    """A bot whose login fails."""
+
+    async def start(self, token: str) -> None:
+        self.logged_in.set()
+        raise RuntimeError("improper token format")
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +124,90 @@ def test_bridge_without_token_does_not_start(tmp_path: Path) -> None:
     assert not started
     assert "no bot token configured" in message
     assert not bridge.is_running()
+
+
+def test_bridge_start_is_idempotent_with_the_same_config(tmp_path: Path) -> None:
+    bridge = DiscordBridge()
+    kwargs = {
+        "token": "bot-token",
+        "guild_id": None,
+        "base_url": "http://dockhand:8080",
+        "api_token": "dockhand-secret",
+        "db_path": str(tmp_path / "app.sqlite"),
+    }
+
+    started, _message = bridge.start(**kwargs)
+    assert started
+    assert FakeBot.instances[0].logged_in.wait(timeout=5)
+
+    started, message = bridge.start(**kwargs)
+
+    assert started
+    assert "already running" in message
+    assert len(FakeBot.instances) == 1
+    bridge.stop()
+
+
+def test_bridge_stop_closes_the_bot(tmp_path: Path) -> None:
+    bridge = DiscordBridge()
+    bridge.start(
+        token="bot-token",
+        guild_id=None,
+        base_url="http://dockhand:8080",
+        api_token="dockhand-secret",
+        db_path=str(tmp_path / "app.sqlite"),
+    )
+    bot = FakeBot.instances[0]
+    assert bot.logged_in.wait(timeout=5)
+
+    bridge.stop()
+
+    assert bot.closed
+    assert not bridge.is_running()
+
+
+def test_bridge_restarts_when_the_dockhand_url_changes(tmp_path: Path) -> None:
+    bridge = DiscordBridge()
+    common = {
+        "token": "bot-token",
+        "guild_id": None,
+        "api_token": "dockhand-secret",
+        "db_path": str(tmp_path / "app.sqlite"),
+    }
+    bridge.start(base_url="http://dockhand:8080", **common)
+    assert FakeBot.instances[0].logged_in.wait(timeout=5)
+
+    bridge.start(base_url="http://other:9000", **common)
+
+    assert len(FakeBot.instances) == 2
+    assert FakeBot.instances[0].closed
+    assert FakeBot.instances[1].logged_in.wait(timeout=5)
+    bridge.stop()
+
+
+def test_bridge_reports_a_failed_login(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(bridge_module, "DiscordBot", FailingBot)
+    bridge = DiscordBridge()
+
+    bridge.start(
+        token="bad-token",
+        guild_id=None,
+        base_url="http://dockhand:8080",
+        api_token="dockhand-secret",
+        db_path=str(tmp_path / "app.sqlite"),
+    )
+    assert FailingBot.instances[0].logged_in.wait(timeout=5)
+
+    for _attempt in range(100):
+        if bridge.error() is not None:
+            break
+        threading.Event().wait(0.05)
+
+    assert bridge.error() is not None
+    assert "improper token format" in bridge.status()
+    assert "failed" in bridge.status()
 
 
 def test_bridge_restarts_with_a_new_token(tmp_path: Path) -> None:

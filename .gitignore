@@ -222,3 +222,8 @@ __marimo__/
 # Local SQLite data and agent memory
 data/
 .opencode/
+
+# Reflex frontend artifacts
+.web/
+.states/
+reflex.lock/

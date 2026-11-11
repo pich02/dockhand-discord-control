@@ -69,12 +69,22 @@ def verify_discord_token(
 class DiscordBridge:
     """Owns the background Discord bot thread and its lifecycle."""
 
+    #: How long ``start`` waits for the bot thread to publish its event loop.
+    STARTUP_TIMEOUT = 5.0
+    #: How long ``stop`` waits for the bot thread to finish.
+    STOP_TIMEOUT = 10.0
+
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        # Guards the values published by the bot thread.  It is separate from
+        # ``_lock`` because the stopping thread holds ``_lock`` while it
+        # joins the bot thread, which would deadlock on a shared lock.
+        self._data_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._bot: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._token: str | None = None
+        self._config: tuple[str, str | None, str, str] | None = None
         self._error: str | None = None
 
     # -- queries ----------------------------------------------------------
@@ -86,19 +96,21 @@ class DiscordBridge:
 
     def error(self) -> str | None:
         """Return the last bot error, if any."""
-        with self._lock:
+        with self._data_lock:
             return self._error
 
     def status(self) -> str:
         """Return a one-line description of the bridge state."""
+        error = self.error()
         with self._lock:
-            if self._thread is not None and self._thread.is_alive():
-                if self._error:
-                    return f"Discord bot failed: {self._error}"
-                return "Discord bot is running."
-            if self._error:
-                return f"Discord bot failed: {self._error}"
-            return "Discord bot is not running."
+            running = self._thread is not None and self._thread.is_alive()
+        if running:
+            if error:
+                return f"Discord bot failed: {error}"
+            return "Discord bot is running."
+        if error:
+            return f"Discord bot failed: {error}"
+        return "Discord bot is not running."
 
     # -- lifecycle --------------------------------------------------------
 
@@ -113,18 +125,27 @@ class DiscordBridge:
     ) -> tuple[bool, str]:
         """Start (or restart) the bot thread.
 
-        Returns ``(started, message)``.  When the bot is already running with
-        the same token it is left untouched.
+        Returns ``(started, message)``.  The bot is left untouched when it is
+        already running with the same configuration; a changed token, guild
+        id, Dockhand URL or Dockhand token restarts it so the bot always
+        talks to the configured server.
         """
+        ready = threading.Event()
         with self._lock:
             if not token or not token.strip():
                 self._stop_locked()
                 return False, "Discord bot not started: no bot token configured."
             token = token.strip()
+            config = (token, guild_id, base_url, api_token)
             if self._thread is not None and self._thread.is_alive():
-                if self._token == token:
+                if self._config == config:
                     return True, "Discord bot is already running."
                 self._stop_locked()
+                if self._thread is not None:
+                    return False, (
+                        "The previous Discord bot did not stop cleanly; "
+                        "restart the app to replace it."
+                    )
             try:
                 bot = DiscordBot(
                     token=token,
@@ -136,21 +157,27 @@ class DiscordBridge:
                     guild_id=guild_id,
                 )
             except Exception as exc:
-                self._error = str(exc)
+                self._set_error(str(exc))
                 logger.warning("Discord bridge failed to start: %s", exc)
                 return False, f"Discord bot failed to start: {exc}"
-            self._bot = bot
             self._token = token
-            self._error = None
+            self._config = config
+            with self._data_lock:
+                self._bot = bot
+            self._set_error(None)
             thread = threading.Thread(
                 target=self._run,
-                args=(bot, token),
+                args=(bot, token, ready),
                 daemon=True,
                 name="discord-bridge",
             )
             self._thread = thread
             thread.start()
-            return True, "Discord bot started."
+        # Wait for the bot thread to publish its event loop, so that a
+        # following ``stop`` can close the bot instead of orphaning it.
+        if not ready.wait(timeout=self.STARTUP_TIMEOUT):
+            return True, "Discord bot is starting; it was not ready yet."
+        return True, "Discord bot started."
 
     def stop(self) -> None:
         """Stop the bot thread if it is running."""
@@ -159,35 +186,61 @@ class DiscordBridge:
 
     # -- internals --------------------------------------------------------
 
+    def _set_error(self, message: str | None) -> None:
+        with self._data_lock:
+            self._error = message
+
     def _stop_locked(self) -> None:
-        bot = self._bot
-        loop = self._loop
+        with self._data_lock:
+            bot = self._bot
+            loop = self._loop
         thread = self._thread
         if bot is not None and loop is not None and loop.is_running():
             future = asyncio.run_coroutine_threadsafe(bot.close(), loop)
             try:
-                future.result(timeout=10)
+                future.result(timeout=self.STOP_TIMEOUT)
             except Exception as exc:  # pragma: no cover - shutdown best effort
                 logger.warning("Discord bot did not close cleanly: %s", exc)
         if thread is not None and thread.is_alive():
-            thread.join(timeout=10)
-        self._bot = None
-        self._loop = None
+            thread.join(timeout=self.STOP_TIMEOUT)
+            if thread.is_alive():
+                # Keep the reference: dropping it would orphan a live bot.
+                self._set_error("the Discord bot did not stop cleanly")
+                logger.error(
+                    "Discord bot thread did not stop within %ss", self.STOP_TIMEOUT
+                )
+                return
+        with self._data_lock:
+            self._bot = None
+            self._loop = None
         self._thread = None
         self._token = None
+        self._config = None
+        self._set_error(None)
 
-    def _run(self, bot: Any, token: str) -> None:
+    def _run(self, bot: Any, token: str, ready: threading.Event) -> None:
         """Run the bot until it stops; record failures for the UI."""
         try:
-            asyncio.run(self._run_bot(bot, token))
+            asyncio.run(self._run_bot(bot, token, ready))
         except Exception as exc:
-            with self._lock:
-                self._error = str(exc)
+            self._set_error(str(exc))
             logger.warning("Discord bot stopped with an error: %s", exc)
+            ready.set()
 
-    async def _run_bot(self, bot: Any, token: str) -> None:
-        with self._lock:
-            self._loop = asyncio.get_running_loop()
+    async def _run_bot(self, bot: Any, token: str, ready: threading.Event) -> None:
+        loop = asyncio.get_running_loop()
+        # Only the data lock is taken here: the stopping thread holds the
+        # lifecycle lock while it joins this thread, so taking it here would
+        # deadlock.
+        with self._data_lock:
+            current = self._bot is bot
+            if current:
+                self._loop = loop
+        ready.set()
+        if not current:
+            # The bot was replaced or stopped before it came up.
+            await bot.close()
+            return
         await bot.start(token)
 
     @staticmethod

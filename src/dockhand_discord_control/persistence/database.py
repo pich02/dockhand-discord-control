@@ -27,10 +27,11 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     (``./data/app.sqlite``) points at a directory that a fresh checkout does
     not have, and SQLite refuses to create the file in that case.
     """
-    parent = Path(db_path).expanduser().parent
+    path = Path(db_path).expanduser()
+    parent = path.parent
     if str(parent) not in ("", "."):
         parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     return conn
 
