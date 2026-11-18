@@ -255,6 +255,7 @@ class AppState(rx.State):
 
     # -- settings ---------------------------------------------------------
 
+    @rx.event
     def load_settings(self) -> None:
         """Load dockhand and Discord settings from the repository."""
         try:
@@ -272,6 +273,7 @@ class AppState(rx.State):
         self.discord_guild_id = guild_id
         self.status_message = "Settings loaded."
 
+    @rx.event
     async def save_settings(self) -> None:
         """Persist dockhand and Discord settings, then verify the connections.
 
@@ -304,6 +306,7 @@ class AppState(rx.State):
                 )
                 self.status_message = "Dockhand base URL and API token are required."
                 return
+            self.status_message = "Saving settings..."
             repo = self._settings_repo()
             logger.info("save_settings: writing the settings to %s", self._db_path())
             repo.set_dockhand_settings(base_url, api_token)
@@ -391,6 +394,7 @@ class AppState(rx.State):
             return f"{message} Token check: {warning}.", status
         return message, status
 
+    @rx.event
     async def load_dashboard(self) -> None:
         """Load settings then refresh the status snapshot for the dashboard."""
         self.load_settings()
@@ -400,6 +404,7 @@ class AppState(rx.State):
             return
         await self.refresh_status()
 
+    @rx.event
     async def load_mappings_page(self) -> None:
         """Load settings, ensure containers are available, then load mappings."""
         self.load_settings()
@@ -411,20 +416,25 @@ class AppState(rx.State):
             await self.refresh_status()
         self.load_mappings()
 
+    @rx.event
     def set_dockhand_base_url(self, value: str) -> None:
         self.dockhand_base_url = _text(value)
 
+    @rx.event
     def set_dockhand_api_token(self, value: str) -> None:
         self.dockhand_api_token = _text(value)
 
+    @rx.event
     def set_discord_bot_token(self, value: str) -> None:
         self.discord_bot_token = _text(value)
 
+    @rx.event
     def set_discord_guild_id(self, value: str) -> None:
         self.discord_guild_id = _text(value)
 
     # -- mappings ---------------------------------------------------------
 
+    @rx.event
     def load_mappings(self) -> None:
         """Load all channel mappings for the known containers."""
         loaded: list[_Mapping] = []
@@ -446,6 +456,7 @@ class AppState(rx.State):
         self.mappings = loaded
         self.status_message = f"Loaded {len(loaded)} mapping(s)."
 
+    @rx.event
     def save_mapping(self, container_name: str, channel_id: str, enabled: bool) -> None:
         """Upsert a channel mapping and refresh the in-state list."""
         try:
@@ -466,6 +477,7 @@ class AppState(rx.State):
             f"Mapping saved for {container_name} on channel {channel_id}."
         )
 
+    @rx.event
     def toggle_mapping(self, container_name: str, channel_id: str) -> None:
         """Flip the enabled flag of a channel mapping."""
         new_enabled = False
@@ -528,6 +540,7 @@ class AppState(rx.State):
 
     # -- status -----------------------------------------------------------
 
+    @rx.event
     async def refresh_status(self) -> None:
         """Refresh the environments/containers snapshot via the use case.
 
