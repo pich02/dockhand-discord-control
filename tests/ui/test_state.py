@@ -314,6 +314,25 @@ def test_save_settings_is_a_coroutine_handler() -> None:
     assert inspect.iscoroutinefunction(AppState.load_mappings_page.fn)
 
 
+def test_event_handlers_are_registered() -> None:
+    """Settings and page handlers must be registered as Reflex events."""
+    expected = {
+        "load_settings",
+        "save_settings",
+        "load_dashboard",
+        "load_mappings_page",
+        "refresh_status",
+        "load_mappings",
+        "save_mapping",
+        "toggle_mapping",
+        "set_dockhand_base_url",
+        "set_dockhand_api_token",
+        "set_discord_bot_token",
+        "set_discord_guild_id",
+    }
+    assert expected.issubset(set(AppState.event_handlers))
+
+
 def test_save_settings_runs_the_dockhand_call_off_the_event_loop() -> None:
     repo = FakeSettingsRepository()
     threads: list[int] = []

@@ -96,6 +96,7 @@ def settings_page() -> rx.Component:
                 value=AppState.dockhand_base_url,
                 placeholder="http://dockhand:8080",
                 on_change=AppState.set_dockhand_base_url,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.input(
@@ -103,18 +104,21 @@ def settings_page() -> rx.Component:
                 type="password",
                 placeholder="Dockhand API token",
                 on_change=AppState.set_dockhand_api_token,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.input(
                 value=AppState.discord_bot_token,
                 placeholder="Discord bot token",
                 on_change=AppState.set_discord_bot_token,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.input(
                 value=AppState.discord_guild_id,
                 placeholder="Discord guild ID (optional)",
                 on_change=AppState.set_discord_guild_id,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.button(
