@@ -35,6 +35,7 @@ def dashboard_page() -> rx.Component:
             align="center",
             margin_bottom="1rem",
         ),
+        rx.text(AppState.discord_bot_status, margin_bottom="1rem"),
         rx.text("Environments", weight="bold", margin_bottom="0.5rem"),
         rx.table.root(
             rx.table.header(
@@ -123,6 +124,7 @@ def settings_page() -> rx.Component:
                 width="100%",
             ),
             rx.text(AppState.status_message),
+            rx.text(AppState.discord_bot_status),
             spacing="1",
             width="100%",
             max_width="400px",
