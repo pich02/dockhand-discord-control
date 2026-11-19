@@ -134,31 +134,28 @@ class AppState(rx.State):
     discord_bot_status: str = ""
     mappings: list[_Mapping] = []
 
-    def __init__(
-        self,
-        parent_state: BaseState | None = None,
-        init_substates: bool = True,
-        _reflex_internal_init: bool = False,
-        settings_repo: _SettingsRepository | None = None,
-        mapping_repo: _ChannelMappingRepository | None = None,
-        snapshot_use_case: _SnapshotUseCase | None = None,
-        discord_bridge: _DiscordBridge | None = None,
-        token_verifier: Callable[[str], str | None] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        # Forward the Reflex-internal init flags so the framework can
-        # instantiate the state directly during compilation (e.g.
-        # ``compile_state`` calls ``state(_reflex_internal_init=True)``)
-        # without tripping the "do not instantiate state directly" guard.
-        self._init_bookkeeping(parent_state)
-        # pyright cannot infer pydantic's dynamically generated ``__init__``
-        # signature, so these legitimate Reflex-internal flags are ignored here.
-        super().__init__(
-            parent_state=parent_state,
-            init_substates=init_substates,  # type: ignore[call-arg]
-            _reflex_internal_init=_reflex_internal_init,  # type: ignore[call-arg]
-            **kwargs,
-        )
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        settings_repo = kwargs.pop("settings_repo", None)
+        mapping_repo = kwargs.pop("mapping_repo", None)
+        snapshot_use_case = kwargs.pop("snapshot_use_case", None)
+        discord_bridge = kwargs.pop("discord_bridge", None)
+        token_verifier = kwargs.pop("token_verifier", None)
+
+        if args:
+            parent_state = args[0]
+            if len(args) >= 2:
+                kwargs.setdefault("init_substates", args[1])
+            if len(args) >= 3:
+                kwargs.setdefault("_reflex_internal_init", args[2])
+        else:
+            parent_state = kwargs.get("parent_state")
+
+        init_bookkeeping = getattr(self, "_init_bookkeeping", None)
+        if callable(init_bookkeeping):
+            init_bookkeeping(parent_state)
+
+        super().__init__(*args, **kwargs)
+
         # Dependency-injected collaborators.  They live in a single instance
         # attribute that is not a class field, so Reflex does not treat them
         # as state vars and does not try to serialize them.
@@ -274,7 +271,7 @@ class AppState(rx.State):
         self.status_message = "Settings loaded."
 
     @rx.event
-    async def save_settings(self) -> None:
+    async def save_settings(self):  # type: ignore[override]
         """Persist dockhand and Discord settings, then verify the connections.
 
         The handler is asynchronous because the verification steps talk to the
@@ -307,6 +304,7 @@ class AppState(rx.State):
                 self.status_message = "Dockhand base URL and API token are required."
                 return
             self.status_message = "Saving settings..."
+            yield
             repo = self._settings_repo()
             logger.info("save_settings: writing the settings to %s", self._db_path())
             repo.set_dockhand_settings(base_url, api_token)

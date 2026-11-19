@@ -123,6 +123,7 @@ def settings_page() -> rx.Component:
             ),
             rx.button(
                 "Save settings",
+                type="button",
                 on_click=AppState.save_settings,  # type: ignore[arg-type]
                 variant="solid",
                 width="100%",
