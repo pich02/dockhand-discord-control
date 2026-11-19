@@ -202,7 +202,7 @@ def test_save_settings_persists_to_repository() -> None:
     state.discord_bot_token = "bot-token"
     state.discord_guild_id = "guild-1"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
     assert repo.saved_discord == "bot-token"
@@ -223,7 +223,7 @@ def test_save_settings_starts_the_discord_bridge() -> None:
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bot-token"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert len(bridge.started) == 1
     assert bridge.started[0]["token"] == "bot-token"
@@ -243,7 +243,7 @@ def test_save_settings_reports_token_check_warning() -> None:
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bad-token"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert "Token check: the Discord bot token was rejected" in state.status_message
 
@@ -259,7 +259,7 @@ def test_save_settings_reports_dockhand_connection_failure() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert "Dockhand connection failed" in state.status_message
     assert "connection refused" in state.status_message
@@ -282,7 +282,7 @@ def test_save_settings_reports_persistence_failure() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert "Failed to save settings" in state.status_message
     assert "database is locked" in state.status_message
@@ -300,15 +300,30 @@ def test_save_settings_without_token_stops_the_bridge() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert bridge.stopped
     assert bridge.started == []
     assert "no bot token configured" in state.status_message
 
 
+async def _run(handler: Any, *args: Any, **kwargs: Any) -> None:
+    result = handler(*args, **kwargs)
+    if inspect.isasyncgen(result):
+        async for _ in result:
+            pass
+        return
+    if inspect.iscoroutine(result):
+        await result
+        return
+    if result is not None:
+        raise AssertionError(f"Unexpected handler result: {result!r}")
+
+
 def test_save_settings_is_a_coroutine_handler() -> None:
-    assert inspect.iscoroutinefunction(AppState.save_settings.fn)
+    assert inspect.isasyncgenfunction(
+        AppState.save_settings.fn
+    ) or inspect.iscoroutinefunction(AppState.save_settings.fn)
     assert inspect.iscoroutinefunction(AppState.refresh_status.fn)
     assert inspect.iscoroutinefunction(AppState.load_dashboard.fn)
     assert inspect.iscoroutinefunction(AppState.load_mappings_page.fn)
@@ -351,7 +366,7 @@ def test_save_settings_runs_the_dockhand_call_off_the_event_loop() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert threads
     assert threads[0] != threading.get_ident()
@@ -391,7 +406,7 @@ def test_save_settings_validates_required_fields() -> None:
     state = AppState(settings_repo=repo)
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert repo.saved_dockhand is None
     assert repo.saved_discord is None
@@ -435,7 +450,7 @@ def test_save_settings_with_null_values_reports_instead_of_raising() -> None:
     state.dockhand_base_url = None  # type: ignore[assignment]
     state.dockhand_api_token = None  # type: ignore[assignment]
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert repo.saved_dockhand is None
     assert "Dockhand base URL and API token are required." in state.status_message
