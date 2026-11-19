@@ -23,6 +23,7 @@ dev = [
     "import-linter",
     "pytest",
     "tox",
+    "python-socketio[client]",
 ]
 
 [tool.setuptools.packages.find]

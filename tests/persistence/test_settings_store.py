@@ -10,6 +10,7 @@ def test_empty_db_returns_defaults() -> None:
     try:
         assert repo.get_dockhand_settings() == ("", "")
         assert repo.get_discord_token() is None
+        assert repo.get_discord_guild_id() is None
     finally:
         repo.close()
 
@@ -40,17 +41,33 @@ def test_discord_token_round_trip() -> None:
         repo.close()
 
 
+def test_discord_guild_id_round_trip() -> None:
+    repo = SqliteSettingsRepository(":memory:")
+    try:
+        assert repo.get_discord_guild_id() is None
+        repo.set_discord_guild_id("guild-123")
+        assert repo.get_discord_guild_id() == "guild-123"
+        repo.set_discord_guild_id(None)
+        assert repo.get_discord_guild_id() is None
+        repo.set_discord_guild_id("")
+        assert repo.get_discord_guild_id() is None
+    finally:
+        repo.close()
+
+
 def test_settings_persist_across_instances(tmp_path) -> None:
     db_path = str(tmp_path / "app.sqlite")
     repo1 = SqliteSettingsRepository(db_path)
     try:
         repo1.set_dockhand_settings("http://dockhand:8080", "token-a")
         repo1.set_discord_token("bot-token-a")
+        repo1.set_discord_guild_id("guild-a")
     finally:
         repo1.close()
     repo2 = SqliteSettingsRepository(db_path)
     try:
         assert repo2.get_dockhand_settings() == ("http://dockhand:8080", "token-a")
         assert repo2.get_discord_token() == "bot-token-a"
+        assert repo2.get_discord_guild_id() == "guild-a"
     finally:
         repo2.close()

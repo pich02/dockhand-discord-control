@@ -3,5 +3,6 @@
 import reflex as rx
 
 config = rx.Config(
-    app_name="dockhand_discord_control.ui",
+    app_name="dockhand_discord_control",
+    app_module_import="app",
 )

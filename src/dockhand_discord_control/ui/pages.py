@@ -7,9 +7,19 @@ import reflex as rx
 from dockhand_discord_control.ui.state import AppState
 
 
+def _navbar() -> rx.Component:
+    return rx.hstack(
+        rx.link("Dashboard", href="/"),
+        rx.link("Settings", href="/settings"),
+        rx.link("Mappings", href="/mappings"),
+        spacing="4",
+    )
+
+
 def dashboard_page() -> rx.Component:
     """Read-only status snapshot of Dockhand environments and containers."""
     return rx.container(
+        _navbar(),
         rx.heading("Dashboard"),
         rx.text(
             "Environments and containers managed by the Dockhand server.",
@@ -25,6 +35,7 @@ def dashboard_page() -> rx.Component:
             align="center",
             margin_bottom="1rem",
         ),
+        rx.text(AppState.discord_bot_status, margin_bottom="1rem"),
         rx.text("Environments", weight="bold", margin_bottom="0.5rem"),
         rx.table.root(
             rx.table.header(
@@ -75,6 +86,7 @@ def dashboard_page() -> rx.Component:
 def settings_page() -> rx.Component:
     """Edit and save Dockhand and Discord settings."""
     return rx.container(
+        _navbar(),
         rx.heading("Settings"),
         rx.text(
             "Configure the Dockhand server and Discord bot connection.",
@@ -84,6 +96,7 @@ def settings_page() -> rx.Component:
                 value=AppState.dockhand_base_url,
                 placeholder="http://dockhand:8080",
                 on_change=AppState.set_dockhand_base_url,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.input(
@@ -91,18 +104,21 @@ def settings_page() -> rx.Component:
                 type="password",
                 placeholder="Dockhand API token",
                 on_change=AppState.set_dockhand_api_token,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.input(
                 value=AppState.discord_bot_token,
                 placeholder="Discord bot token",
                 on_change=AppState.set_discord_bot_token,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.input(
                 value=AppState.discord_guild_id,
                 placeholder="Discord guild ID (optional)",
                 on_change=AppState.set_discord_guild_id,  # type: ignore[arg-type]
+                debounce_timeout=0,
                 width="100%",
             ),
             rx.button(
@@ -112,6 +128,7 @@ def settings_page() -> rx.Component:
                 width="100%",
             ),
             rx.text(AppState.status_message),
+            rx.text(AppState.discord_bot_status),
             spacing="1",
             width="100%",
             max_width="400px",
@@ -124,6 +141,7 @@ def settings_page() -> rx.Component:
 def mappings_page() -> rx.Component:
     """Per-container visibility and channel mapping."""
     return rx.container(
+        _navbar(),
         rx.heading("Mappings"),
         rx.text(
             "Map containers to Discord channels and toggle their visibility.",

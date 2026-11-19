@@ -59,3 +59,7 @@ class SettingsRepository(Protocol):
     def get_discord_token(self) -> str | None:
         """Return the Discord bot token, if configured."""
         raise NotImplementedError
+
+    def get_discord_guild_id(self) -> str | None:
+        """Return the Discord guild ID, if configured."""
+        raise NotImplementedError
