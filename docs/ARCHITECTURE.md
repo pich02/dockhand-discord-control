@@ -17,9 +17,9 @@ configured and observed primarily through a Reflex web UI.
   (chat platform) API integration, designed so a future message app can replace
   or supplement Discord.
 - Reflex web UI used to configure:
-  - Dockhand URL and API token,
-  - Discord bot credentials (app / webhook),
-  - per-container Discord visibility and channel mapping.
+  - Dockhand and Discord settings (base URL, API token, bot token, optional guild
+    ID) through `/settings`, persisted in SQLite; only `DB_PATH` is env-configured.
+  - Per-container Discord channel mappings and visibility.
 
 **Out of scope (MVP):** other chat platforms, multi-server scaling, RBAC beyond
 channel mappings, container logs streaming, deployment automation beyond start/stop.
@@ -150,7 +150,8 @@ Dependency rule:
   read-oriented for use cases).
 - Dashboard: read-only status snapshot via domain use cases (observability; Discord
   remains the control plane).
-- Settings page: Dockhand URL + token, Discord bot token / webhook, platform choice.
+- Settings page: Dockhand base URL + API token, Discord bot token, optional
+  Discord guild ID.
 - Mappings page: choose container visibility (enabled), choose Discord channel per
   container.
 - Event handlers that talk to the network or to the bot thread are `async` and
