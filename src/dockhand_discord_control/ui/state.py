@@ -504,7 +504,7 @@ class AppState(rx.State):
             self.status_message = f"Failed to add mapping: {exc}"
             return
         self.new_mapping_channel_id = ""
-        self.load_mappings()
+        self._upsert_mapping(container_name, channel_id, enabled)
         self.status_message = (
             f"Mapping added for {container_name} on channel {channel_id}."
         )
@@ -527,6 +527,7 @@ class AppState(rx.State):
         if not channel_id:
             self.status_message = "Channel ID is required."
             return
+        new_mapping_persisted = False
         try:
             repo = self._mapping_repo()
             repo.add_mapping(
@@ -536,10 +537,16 @@ class AppState(rx.State):
                     enabled=enabled,
                 )
             )
+            new_mapping_persisted = True
             if original_channel_id and original_channel_id != channel_id:
                 repo.remove_mapping(original_channel_id)
         except Exception as exc:
             logger.exception("save_mapping failed")
+            if new_mapping_persisted:
+                try:
+                    self.load_mappings()
+                except Exception:  # pragma: no cover - best effort reload
+                    logger.exception("save_mapping reload after partial write failed")
             self.status_message = f"Failed to save mapping: {exc}"
             return
         self._upsert_mapping(

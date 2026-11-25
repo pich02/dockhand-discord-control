@@ -168,7 +168,7 @@ def mappings_page() -> rx.Component:
                     ),
                     rx.hstack(
                         rx.switch(
-                            is_checked=AppState.new_mapping_enabled,
+                            checked=AppState.new_mapping_enabled,
                             on_change=AppState.set_new_mapping_enabled,  # type: ignore[arg-type]
                         ),
                         rx.text("Enabled"),

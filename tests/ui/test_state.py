@@ -827,3 +827,94 @@ def test_load_mappings_reflects_persisted_changes_after_refresh() -> None:
             "original_channel_id": "ch-1",
         }
     ]
+
+
+def test_add_mapping_creates_disabled_mapping_from_form() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "ch-1"
+    state.new_mapping_enabled = False
+
+    state.add_mapping()
+
+    assert repo.added == [
+        ChannelMapping(container_name="web", channel_id="ch-1", enabled=False)
+    ]
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": False,
+            "original_channel_id": "ch-1",
+        }
+    ]
+
+
+def test_add_mapping_preserves_unsaved_drafts() -> None:
+    repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1"), _container("c2", "api", "e1")],
+    )
+    state.load_mappings()
+    state.update_mapping_channel_id(0, "draft-ch")
+
+    state.new_mapping_container_name = "api"
+    state.new_mapping_channel_id = "ch-2"
+    state.new_mapping_enabled = True
+    state.add_mapping()
+
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "draft-ch",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        },
+        {
+            "container_name": "api",
+            "channel_id": "ch-2",
+            "enabled": True,
+            "original_channel_id": "ch-2",
+        },
+    ]
+
+
+def test_save_mapping_rename_partial_failure_reloads_persisted_state() -> None:
+    class FailingRemoveRepository(FakeMappingRepository):
+        def remove_mapping(self, channel_id: str) -> None:
+            raise RuntimeError("remove failed")
+
+    repo = FailingRemoveRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.load_mappings()
+
+    state.save_mapping("web", "ch-2", False, "ch-1")
+
+    assert "Failed to save mapping" in state.status_message
+    assert "remove failed" in state.status_message
+    assert sorted(state.mappings, key=lambda m: m["channel_id"]) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        },
+        {
+            "container_name": "web",
+            "channel_id": "ch-2",
+            "enabled": False,
+            "original_channel_id": "ch-2",
+        },
+    ]
