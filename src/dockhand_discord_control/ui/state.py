@@ -325,7 +325,17 @@ class AppState(rx.State):
         self.dockhand_api_token = api_token
         # The Dockhand client is rebuilt from the saved values.
         if self.__collaborators["owns_snapshot_use_case"]:
+            old_use_case = self.__collaborators["snapshot_use_case"]
             self.__collaborators["snapshot_use_case"] = None
+            old_client = getattr(old_use_case, "_client", None)
+            close = getattr(old_client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning(
+                        "Dockhand client did not close cleanly", exc_info=True
+                    )
         try:
             # Resolve the use case on the event loop thread; the worker only
             # calls it, so the cached use case is never mutated off-loop.
