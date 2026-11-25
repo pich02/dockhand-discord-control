@@ -151,6 +151,8 @@ class DiscordBridge:
                         "The previous Discord bot did not stop cleanly; "
                         "restart the app to replace it."
                     )
+            elif self._thread is not None:
+                self._stop_locked()
             dockhand_client: DockhandApiClient | None = None
             mapping_repo: SqliteChannelMappingRepository | None = None
             try:

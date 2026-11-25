@@ -437,3 +437,59 @@ def test_bridge_start_failure_closes_created_resources(
     assert len(_TrackingMappingRepo.instances) == 1
     assert _TrackingClient.instances[0].closed
     assert _TrackingMappingRepo.instances[0].closed
+
+
+class _CrashingBot(FakeBot):
+    proceed = threading.Event()
+
+    async def start(self, token: str) -> None:
+        self._stop = asyncio.Event()
+        self.logged_in.set()
+        while not self.proceed.is_set():
+            await asyncio.sleep(0.05)
+        raise RuntimeError("runtime boom")
+
+
+def test_bridge_restart_after_runtime_crash_closes_stale_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _TrackingClient.instances = []
+    _TrackingMappingRepo.instances = []
+    _CrashingBot.proceed = threading.Event()
+    monkeypatch.setattr(bridge_module, "DiscordBot", _CrashingBot)
+    monkeypatch.setattr(bridge_module, "DockhandApiClient", _TrackingClient)
+    monkeypatch.setattr(
+        bridge_module, "SqliteChannelMappingRepository", _TrackingMappingRepo
+    )
+    bridge = DiscordBridge()
+    kwargs = {
+        "token": "bot-token",
+        "guild_id": None,
+        "base_url": "http://dockhand:8080",
+        "api_token": "dockhand-secret",
+        "db_path": str(tmp_path / "app.sqlite"),
+    }
+
+    started, _message = bridge.start(**kwargs)
+    assert started
+    assert _CrashingBot.instances[0].logged_in.wait(timeout=5)
+
+    _CrashingBot.proceed.set()
+    for _attempt in range(100):
+        if not bridge.is_running() and bridge.error() is not None:
+            break
+        threading.Event().wait(0.05)
+
+    assert not bridge.is_running()
+    assert bridge.error() == "runtime boom"
+    assert len(_TrackingClient.instances) == 1
+    assert len(_TrackingMappingRepo.instances) == 1
+
+    monkeypatch.setattr(bridge_module, "DiscordBot", FakeBot)
+    started, _message = bridge.start(**kwargs)
+
+    assert started
+    assert _TrackingClient.instances[0].closed
+    assert _TrackingMappingRepo.instances[0].closed
+    assert FakeBot.instances[-1].logged_in.wait(timeout=5)
+    bridge.stop()
