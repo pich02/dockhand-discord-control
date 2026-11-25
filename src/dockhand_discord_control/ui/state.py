@@ -17,7 +17,6 @@ from collections.abc import Callable
 from typing import Any, Protocol, TypedDict
 
 import reflex as rx
-from reflex.state import BaseState
 
 from dockhand_discord_control.domain.models import (
     ChannelMapping,
