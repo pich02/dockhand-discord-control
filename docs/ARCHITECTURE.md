@@ -78,7 +78,13 @@ Dependency rule:
 - Ports (interfaces):
   - `DockhandClient` — list environments / containers, start / stop container.
   - `ChannelMappingRepository` — lookup mapping by channel / container, persist.
-  - `SettingsRepository` — load / persist app settings.
+    Invariant: one mapping per `channel_id` (a channel maps to at most one
+    container; a container may have mappings from multiple channels). Decided in
+    Task A (`task-enforce-channel-mapping-cardinality`).
+  - `SettingsRepository` — read-only configuration port used by domain/use-case
+    wiring: `get_dockhand_settings() -> tuple[str, str]`,
+    `get_discord_token() -> str | None`,
+    `get_discord_guild_id() -> str | None`.
 - Use cases:
   - Snapshot use case (environment + container status) — used by Discord status/list
     and optionally the UI dashboard.
@@ -109,12 +115,22 @@ Dependency rule:
 
 ### 4.4 Persistence adapter
 
-- SQLite: singleton settings row + `channel_mappings` rows
+- SQLite: `app_settings` key/value rows and `channel_mappings` rows
   (`channel_id`, `container_name`, `enabled`).
-- Invariant: one mapping per `channel_id`. A Discord channel can be mapped to
+- `SqliteSettingsRepository` implements the domain `SettingsRepository` read-only
+  port (`get_dockhand_settings`, `get_discord_token`, `get_discord_guild_id`) and
+  also provides write methods used by the UI
+  (`set_dockhand_settings`, `set_discord_token`, `set_discord_guild_id`).
+  The domain port stays read-only; the UI depends on the persistence adapter's
+  read/write interface.
+- `SqliteChannelMappingRepository` implements `ChannelMappingRepository`.
+  Invariant: one mapping per `channel_id`. A Discord channel can be mapped to
   at most one container; a container may have mappings from multiple channels.
   The schema enforces this with `channel_id` as primary key; the SQLite
-  repository rejects conflicting reassignments.
+  repository rejects conflicting reassignments in an immediate write
+  transaction. Decided in Task A (`task-enforce-channel-mapping-cardinality`).
+- Schema initialization is idempotent; migrations are versioned
+  (`SCHEMA_VERSION` / `ensure_schema_version` in `persistence/migrations.py`).
 - The parent directory of the database file is created when missing, so the
   default path (`./data/app.sqlite`) works in a fresh checkout.
 
@@ -129,7 +145,9 @@ Dependency rule:
 
 - App root: `rxconfig.py`, `app.py`, `pages/` (dashboard / settings / mappings),
   `styles/`.
-- State (`AppState`) loads/saves settings and mappings via persistence ports.
+- State (`AppState`) loads/saves settings and mappings via SQLite persistence
+  adapters (the UI uses their read/write interfaces; domain ports remain
+  read-oriented for use cases).
 - Dashboard: read-only status snapshot via domain use cases (observability; Discord
   remains the control plane).
 - Settings page: Dockhand URL + token, Discord bot token / webhook, platform choice.
@@ -168,12 +186,15 @@ keeping the Dockhand API integration untouched.
 
 ## 6. Reflex flow
 
-1. UI state loads settings + mappings (persistence ports) and, for dashboard,
-   queries the domain snapshot.
-2. Settings page persists via settings port, then verifies the Dockhand
-   connection and starts/restarts/stops the Discord bridge to match the saved
-   token. Failures are surfaced in the status message.
-3. Mappings page persists via mappings port.
+1. UI state loads settings and mappings from the SQLite persistence adapters and,
+   for the dashboard, queries the domain snapshot use case.
+2. Settings page persists via the `SqliteSettingsRepository` read/write
+   interface, then verifies the Dockhand connection and starts/restarts/stops the
+   Discord bridge to match the saved token. Failures are surfaced in the status
+   message.
+3. Mappings page persists via the `SqliteChannelMappingRepository` read/write
+   interface (domain `ChannelMappingRepository` port is read-only for use-case
+   authorization/lookups).
 4. The in-process bridge (same service) consumes mappings when Discord commands run.
 
 ## 7. Cross-cutting concerns
@@ -200,12 +221,12 @@ keeping the Dockhand API integration untouched.
 - `Dockerfile`: Python 3.14 slim base, install project, copy source, non-root user,
   SQLite persisted via volume, Reflex port 8080.
 - `docker-compose.yml`: single service `app`, build context `.`, ports `8080:8080`,
-  `env_file: .env`, environment for `DOCKHAND_*` / `DISCORD_*`, named volume for SQLite.
+  `env_file: .env` (for `DB_PATH` override), named volume `dockhand_data` mounted
+  at `/app/data` for SQLite.
 
 ## 10. Open items / bounded research for implementation
 
 - Exact Dockhand REST API surface and auth scheme (bearer token assumed) — verify.
-- Reflex lifecycle integration to run the Discord bridge inside the Reflex process.
 - discord.py slash command registration strategy (global vs guild-scoped) and channel
   selection UX in Reflex (channel ID input vs richer picker) — MVP uses channel ID.
 
