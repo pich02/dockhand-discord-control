@@ -123,7 +123,7 @@ def _git_commit() -> str:
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):  # pragma: no cover - no git
+    except OSError, subprocess.SubprocessError:  # pragma: no cover - no git
         return "unknown"
     commit = result.stdout.strip()
     return commit or "unknown"

@@ -1,3 +1,8 @@
+*.db
+*.py[cod]
+assets/external/
+.web
+.states
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -230,3 +235,8 @@ reflex.lock/
 
 # Crash dumps
 core.*
+
+# Local tool artifacts
+.memory/
+.playwright-mcp/
+docs/plans/

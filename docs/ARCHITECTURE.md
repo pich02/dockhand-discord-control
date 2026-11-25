@@ -180,7 +180,7 @@ keeping the Dockhand API integration untouched.
 
 ## 8. Tooling and quality gates
 
-- Python 3.13, src layout (`src/dockhand_discord_control/`).
+- Python 3.12–3.14, src layout (`src/dockhand_discord_control/`).
 - `ruff` — lint + format (`PEP8`), config in `pyproject.toml`.
 - `pyright` — type checking, config in `pyproject.toml` / `pyrightconfig.json`.
 - `importlinter` — contracts in `importlinter.yaml` / `pyproject.toml`
@@ -188,10 +188,11 @@ keeping the Dockhand API integration untouched.
 - `pytest` — unit tests under `tests/`.
 - `tox` — envs: `lint` (ruff check + ruff format --check + lint-imports),
   `types` (pyright), `test` (pytest); run via `tox -e lint`, `tox -e types`, `tox -e test`.
+- GitHub Actions — `.github/workflows/lint.yml` runs `tox -e lint` on pushes and pull requests.
 
 ## 9. Docker
 
-- `Dockerfile`: Python 3.13 slim base, install project, copy source, non-root user,
+- `Dockerfile`: Python 3.14 slim base, install project, copy source, non-root user,
   SQLite persisted via volume, Reflex port 8080.
 - `docker-compose.yml`: single service `app`, build context `.`, ports `8080:8080`,
   `env_file: .env`, environment for `DOCKHAND_*` / `DISCORD_*`, named volume for SQLite.

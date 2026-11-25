@@ -4,7 +4,7 @@ Discord bot and Reflex web UI for controlling a self-hosted Dockhand server.
 
 ## Requirements
 
-- Python 3.12 or 3.13
+- Python 3.12, 3.13, or 3.14
 - `docker` and `docker compose` (for the Docker install)
 - A running Dockhand server and a Discord bot token
 
@@ -165,4 +165,14 @@ If there is no `frontend connected` line, the browser never reached the
 backend — in dev mode the UI is served by the frontend dev server
 (`http://localhost:3000`), not by the backend port. In production
 (`--env prod --single-port`) the UI and the API share one port.
+
+## Quality checks
+
+Run the same lint checks locally that CI runs:
+
+```bash
+tox -e lint
+```
+
+GitHub Actions runs this command on pushes and pull requests via `.github/workflows/lint.yml`.
 

@@ -6,7 +6,7 @@ This file explains how the **dockhand-discord-control** project works so AI codi
 
 Discord bot and Reflex web UI for controlling a self-hosted Dockhand server.
 
-- **Language:** Python 3.12–3.13 (src layout)
+- **Language:** Python 3.12–3.14 (src layout)
 - **Web framework:** Reflex (Python)
 - **Entry point:** `app.py` (repo root) exposes `app = build_app()` so `reflex run` works from the repo root.
 - **Reflex config:** `rxconfig.py` (`app_name="dockhand_discord_control"`, `app_module_import="app"`).
@@ -82,10 +82,12 @@ pyright
 pytest
 ```
 
+GitHub Actions runs `tox -e lint` on pushes and pull requests (`.github/workflows/lint.yml`).
+
 Key conventions:
 - Line length 88, double quotes (ruff).
 - `import-linter` enforces layered architecture: `domain` must not depend on other internal modules; adapters depend only on `domain` (+ infra libs).
-- Python 3.13 type targets in `pyrightconfig.json` (include `src` and `tests`).
+- Python 3.14 type targets in `pyrightconfig.json` (include `src` and `tests`).
 
 ## Layered architecture (Clean Architecture style)
 
