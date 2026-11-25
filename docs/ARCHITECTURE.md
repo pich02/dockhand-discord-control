@@ -110,7 +110,11 @@ Dependency rule:
 ### 4.4 Persistence adapter
 
 - SQLite: singleton settings row + `channel_mappings` rows
-  (`container_name`, `channel_id`, `enabled`).
+  (`channel_id`, `container_name`, `enabled`).
+- Invariant: one mapping per `channel_id`. A Discord channel can be mapped to
+  at most one container; a container may have mappings from multiple channels.
+  The schema enforces this with `channel_id` as primary key; the SQLite
+  repository rejects conflicting reassignments.
 - The parent directory of the database file is created when missing, so the
   default path (`./data/app.sqlite`) works in a fresh checkout.
 

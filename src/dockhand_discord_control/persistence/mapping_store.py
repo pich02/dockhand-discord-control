@@ -1,4 +1,8 @@
-"""SQLite-backed implementation of the :class:`ChannelMappingRepository` port."""
+"""SQLite-backed implementation of the :class:`ChannelMappingRepository` port.
+
+Invariant: one mapping per ``channel_id``. A Discord channel can be mapped to
+at most one container. A container may have mappings from multiple channels.
+"""
 
 from __future__ import annotations
 
@@ -50,15 +54,34 @@ class SqliteChannelMappingRepository(ChannelMappingRepository):
         return [self._row_to_mapping(row) for row in rows]
 
     def add_mapping(self, mapping: ChannelMapping) -> None:
-        """Insert or replace a channel mapping."""
+        """Insert or update a channel mapping.
+
+        A channel can be mapped to at most one container. If the channel is
+        already mapped to a different container, a :class:`ValueError` is
+        raised.
+        """
         with self._conn:
+            existing = self._conn.execute(
+                "SELECT container_name FROM channel_mappings WHERE channel_id = ?",
+                (mapping.channel_id,),
+            ).fetchone()
+            if (
+                existing is not None
+                and existing["container_name"] != mapping.container_name
+            ):
+                raise ValueError(
+                    f"channel {mapping.channel_id!r} is already mapped to "
+                    f"container {existing['container_name']!r}"
+                )
             self._conn.execute(
                 """
-                INSERT OR REPLACE INTO channel_mappings
-                    (container_name, channel_id, enabled)
+                INSERT INTO channel_mappings (channel_id, container_name, enabled)
                 VALUES (?, ?, ?)
+                ON CONFLICT(channel_id) DO UPDATE SET
+                    container_name = excluded.container_name,
+                    enabled = excluded.enabled
                 """,
-                (mapping.container_name, mapping.channel_id, int(mapping.enabled)),
+                (mapping.channel_id, mapping.container_name, int(mapping.enabled)),
             )
 
     def set_enabled(self, channel_id: str, enabled: bool) -> None:

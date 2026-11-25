@@ -37,7 +37,12 @@ class DockhandClient(Protocol):
 
 @runtime_checkable
 class ChannelMappingRepository(Protocol):
-    """Port for Discord channel to container mappings."""
+    """Port for Discord channel to container mappings.
+
+    Invariant: one mapping per ``channel_id``. A Discord channel can be mapped
+    to at most one container; a container may have mappings from multiple
+    channels.
+    """
 
     def get_mapping(self, channel_id: str) -> ChannelMapping | None:
         """Return the mapping for a channel, if any."""

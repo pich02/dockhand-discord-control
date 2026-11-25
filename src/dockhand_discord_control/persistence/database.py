@@ -37,7 +37,11 @@ def get_connection(db_path: str) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create the `app_settings` and `channel_mappings` tables if missing."""
+    """Create the `app_settings` and `channel_mappings` tables if missing.
+
+    Invariant: one mapping per channel_id. A Discord channel can be mapped to
+    at most one container; a container may have mappings from multiple channels.
+    """
     with conn:
         conn.executescript(
             """
@@ -47,10 +51,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             );
 
             CREATE TABLE IF NOT EXISTS channel_mappings (
+                channel_id TEXT PRIMARY KEY,
                 container_name TEXT NOT NULL,
-                channel_id TEXT NOT NULL,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY (container_name, channel_id)
+                enabled INTEGER NOT NULL DEFAULT 1
             );
             """
         )

@@ -50,7 +50,12 @@ class DockhandEnvironment(BaseModel):
 
 
 class ChannelMapping(BaseModel):
-    """Maps a Discord channel to a container, with an enable flag."""
+    """Maps a Discord channel to a container, with an enable flag.
+
+    Invariant: one mapping per ``channel_id``. A Discord channel can be mapped
+    to at most one container; a container may have mappings from multiple
+    channels.
+    """
 
     model_config = ConfigDict(frozen=True)
 

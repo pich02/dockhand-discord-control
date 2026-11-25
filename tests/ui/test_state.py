@@ -84,6 +84,12 @@ class FakeMappingRepository:
         ]
 
     def add_mapping(self, mapping: ChannelMapping) -> None:
+        existing = self._mappings.get(mapping.channel_id)
+        if existing is not None and existing.container_name != mapping.container_name:
+            raise ValueError(
+                f"channel {mapping.channel_id!r} is already mapped to "
+                f"container {existing.container_name!r}"
+            )
         self.added.append(mapping)
         self._mappings[mapping.channel_id] = mapping
 
@@ -476,6 +482,22 @@ def test_save_mapping_creates_and_updates() -> None:
     ]
     # Upserted, not duplicated.
     assert len(state.mappings) == 1
+
+
+def test_save_mapping_rejects_conflicting_channel_assignment() -> None:
+    repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(mapping_repo=repo)
+    state.mappings = [{"container_name": "web", "channel_id": "ch-1", "enabled": True}]
+
+    state.save_mapping("db", "ch-1", True)
+
+    assert "Failed to save mapping" in state.status_message
+    assert "already mapped" in state.status_message
+    assert list(state.mappings) == [
+        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+    ]
 
 
 def test_toggle_mapping_flips_enabled_and_persists() -> None:
