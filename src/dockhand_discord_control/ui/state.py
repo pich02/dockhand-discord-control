@@ -88,6 +88,8 @@ class _ChannelMappingRepository(Protocol):
 
     def set_enabled(self, channel_id: str, enabled: bool) -> None: ...
 
+    def remove_mapping(self, channel_id: str) -> None: ...
+
 
 class _SnapshotUseCase(Protocol):
     """Snapshot use case used by the UI."""
@@ -119,6 +121,7 @@ class _Mapping(TypedDict):
     container_name: str
     channel_id: str
     enabled: bool
+    original_channel_id: str
 
 
 class AppState(rx.State):
@@ -133,6 +136,9 @@ class AppState(rx.State):
     status_message: str = ""
     discord_bot_status: str = ""
     mappings: list[_Mapping] = []
+    new_mapping_container_name: str = ""
+    new_mapping_channel_id: str = ""
+    new_mapping_enabled: bool = True
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         settings_repo = kwargs.pop("settings_repo", None)
@@ -430,6 +436,23 @@ class AppState(rx.State):
     def set_discord_guild_id(self, value: str) -> None:
         self.discord_guild_id = _text(value)
 
+    @rx.event
+    def set_new_mapping_container_name(self, value: str) -> None:
+        self.new_mapping_container_name = _text(value)
+
+    @rx.event
+    def set_new_mapping_channel_id(self, value: str) -> None:
+        self.new_mapping_channel_id = _text(value)
+
+    @rx.event
+    def set_new_mapping_enabled(self, value: bool) -> None:
+        self.new_mapping_enabled = bool(value)
+
+    @rx.var
+    def container_names(self) -> list[str]:
+        """Names of known containers, for the add-mapping selector."""
+        return [container.name for container in self.containers]
+
     # -- mappings ---------------------------------------------------------
 
     @rx.event
@@ -445,6 +468,7 @@ class AppState(rx.State):
                             container_name=mapping.container_name,
                             channel_id=mapping.channel_id,
                             enabled=mapping.enabled,
+                            original_channel_id=mapping.channel_id,
                         )
                     )
         except Exception as exc:
@@ -455,8 +479,17 @@ class AppState(rx.State):
         self.status_message = f"Loaded {len(loaded)} mapping(s)."
 
     @rx.event
-    def save_mapping(self, container_name: str, channel_id: str, enabled: bool) -> None:
-        """Upsert a channel mapping and refresh the in-state list."""
+    def add_mapping(self) -> None:
+        """Create a mapping from the add-mapping form."""
+        container_name = _text(self.new_mapping_container_name)
+        channel_id = _text(self.new_mapping_channel_id)
+        enabled = bool(self.new_mapping_enabled)
+        if not container_name:
+            self.status_message = "Select a container to map."
+            return
+        if not channel_id:
+            self.status_message = "Channel ID is required."
+            return
         try:
             repo = self._mapping_repo()
             repo.add_mapping(
@@ -467,13 +500,101 @@ class AppState(rx.State):
                 )
             )
         except Exception as exc:
+            logger.exception("add_mapping failed")
+            self.status_message = f"Failed to add mapping: {exc}"
+            return
+        self.new_mapping_channel_id = ""
+        self.load_mappings()
+        self.status_message = (
+            f"Mapping added for {container_name} on channel {channel_id}."
+        )
+
+    @rx.event
+    def save_mapping(
+        self,
+        container_name: str,
+        channel_id: str,
+        enabled: bool,
+        original_channel_id: str = "",
+    ) -> None:
+        """Upsert a channel mapping and refresh the in-state list."""
+        container_name = _text(container_name)
+        channel_id = _text(channel_id)
+        original_channel_id = _text(original_channel_id)
+        if not container_name:
+            self.status_message = "Container name is required."
+            return
+        if not channel_id:
+            self.status_message = "Channel ID is required."
+            return
+        try:
+            repo = self._mapping_repo()
+            repo.add_mapping(
+                ChannelMapping(
+                    container_name=container_name,
+                    channel_id=channel_id,
+                    enabled=enabled,
+                )
+            )
+            if original_channel_id and original_channel_id != channel_id:
+                repo.remove_mapping(original_channel_id)
+        except Exception as exc:
             logger.exception("save_mapping failed")
             self.status_message = f"Failed to save mapping: {exc}"
             return
-        self._upsert_mapping(container_name, channel_id, enabled)
+        self._upsert_mapping(
+            container_name,
+            channel_id,
+            enabled,
+            original_channel_id=original_channel_id or channel_id,
+        )
         self.status_message = (
             f"Mapping saved for {container_name} on channel {channel_id}."
         )
+
+    @rx.event
+    def update_mapping_channel_id(self, index: int, value: str) -> None:
+        """Update the channel_id draft for a mapping row."""
+        if index < 0 or index >= len(self.mappings):
+            return
+        updated: list[_Mapping] = []
+        for i, current in enumerate(self.mappings):
+            if i == index:
+                updated.append(
+                    _Mapping(
+                        container_name=current["container_name"],
+                        channel_id=_text(value),
+                        enabled=current["enabled"],
+                        original_channel_id=current.get(
+                            "original_channel_id", current["channel_id"]
+                        ),
+                    )
+                )
+            else:
+                updated.append(_Mapping(**current))
+        self.mappings = updated
+
+    @rx.event
+    def update_mapping_enabled(self, index: int, value: bool) -> None:
+        """Update the enabled draft for a mapping row."""
+        if index < 0 or index >= len(self.mappings):
+            return
+        updated: list[_Mapping] = []
+        for i, current in enumerate(self.mappings):
+            if i == index:
+                updated.append(
+                    _Mapping(
+                        container_name=current["container_name"],
+                        channel_id=current["channel_id"],
+                        enabled=bool(value),
+                        original_channel_id=current.get(
+                            "original_channel_id", current["channel_id"]
+                        ),
+                    )
+                )
+            else:
+                updated.append(_Mapping(**current))
+        self.mappings = updated
 
     @rx.event
     def toggle_mapping(self, container_name: str, channel_id: str) -> None:
@@ -493,6 +614,9 @@ class AppState(rx.State):
                         container_name=container_name,
                         channel_id=channel_id,
                         enabled=new_enabled,
+                        original_channel_id=current.get(
+                            "original_channel_id", channel_id
+                        ),
                     )
                 )
             else:
@@ -516,17 +640,26 @@ class AppState(rx.State):
         )
 
     def _upsert_mapping(
-        self, container_name: str, channel_id: str, enabled: bool
+        self,
+        container_name: str,
+        channel_id: str,
+        enabled: bool,
+        original_channel_id: str = "",
     ) -> None:
+        match_channel_id = _text(original_channel_id) or channel_id
         entry = _Mapping(
-            container_name=container_name, channel_id=channel_id, enabled=enabled
+            container_name=container_name,
+            channel_id=channel_id,
+            enabled=enabled,
+            original_channel_id=channel_id,
         )
         updated = False
         new_mappings: list[_Mapping] = []
         for current in self.mappings:
+            current_original = current.get("original_channel_id", current["channel_id"])
             if (
                 current["container_name"] == container_name
-                and current["channel_id"] == channel_id
+                and current_original == match_channel_id
             ):
                 new_mappings.append(entry)
                 updated = True

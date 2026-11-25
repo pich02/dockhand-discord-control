@@ -103,6 +103,9 @@ class FakeMappingRepository:
                 enabled=enabled,
             )
 
+    def remove_mapping(self, channel_id: str) -> None:
+        self._mappings.pop(channel_id, None)
+
 
 class FakeSnapshotUseCase:
     """Fake for the snapshot use case."""
@@ -344,12 +347,18 @@ def test_event_handlers_are_registered() -> None:
         "load_mappings_page",
         "refresh_status",
         "load_mappings",
+        "add_mapping",
         "save_mapping",
         "toggle_mapping",
+        "update_mapping_channel_id",
+        "update_mapping_enabled",
         "set_dockhand_base_url",
         "set_dockhand_api_token",
         "set_discord_bot_token",
         "set_discord_guild_id",
+        "set_new_mapping_container_name",
+        "set_new_mapping_channel_id",
+        "set_new_mapping_enabled",
     }
     assert expected.issubset(set(AppState.event_handlers))
 
@@ -466,19 +475,29 @@ def test_save_mapping_creates_and_updates() -> None:
     repo = FakeMappingRepository()
     state = AppState(mapping_repo=repo)
 
-    state.save_mapping("web", "ch-1", True)
+    state.save_mapping("web", "ch-1", True, "")
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
     assert repo.added == [
         ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)
     ]
 
-    state.save_mapping("web", "ch-1", False)
+    state.save_mapping("web", "ch-1", False, "")
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": False}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": False,
+            "original_channel_id": "ch-1",
+        }
     ]
     # Upserted, not duplicated.
     assert len(state.mappings) == 1
@@ -489,14 +508,26 @@ def test_save_mapping_rejects_conflicting_channel_assignment() -> None:
         mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
     )
     state = AppState(mapping_repo=repo)
-    state.mappings = [{"container_name": "web", "channel_id": "ch-1", "enabled": True}]
+    state.mappings = [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
 
-    state.save_mapping("db", "ch-1", True)
+    state.save_mapping("db", "ch-1", True, "")
 
     assert "Failed to save mapping" in state.status_message
     assert "already mapped" in state.status_message
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
 
 
@@ -505,12 +536,24 @@ def test_toggle_mapping_flips_enabled_and_persists() -> None:
         mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
     )
     state = AppState(mapping_repo=repo)
-    state.mappings = [{"container_name": "web", "channel_id": "ch-1", "enabled": True}]
+    state.mappings = [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
 
     state.toggle_mapping("web", "ch-1")
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": False}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": False,
+            "original_channel_id": "ch-1",
+        }
     ]
     assert repo.set_enabled_calls == [("ch-1", False)]
 
@@ -518,7 +561,12 @@ def test_toggle_mapping_flips_enabled_and_persists() -> None:
 
     assert state.mappings[0]["enabled"] is True
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
     assert repo.set_enabled_calls == [("ch-1", False), ("ch-1", True)]
 
@@ -552,8 +600,18 @@ def test_load_mappings_uses_containers_and_repository() -> None:
     state.load_mappings()
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True},
-        {"container_name": "api", "channel_id": "ch-2", "enabled": False},
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        },
+        {
+            "container_name": "api",
+            "channel_id": "ch-2",
+            "enabled": False,
+            "original_channel_id": "ch-2",
+        },
     ]
     assert "2 mapping(s)" in state.status_message
 
@@ -608,7 +666,12 @@ def test_load_mappings_page_loads_containers_and_mappings() -> None:
 
     assert list(state.containers) == [container]
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
 
 
@@ -646,3 +709,121 @@ def test_refresh_status_reports_failure_without_crashing() -> None:
     assert list(state.containers) == []
     assert "Failed to refresh status" in state.status_message
     assert "down" in state.status_message
+
+
+def test_add_mapping_creates_from_empty() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "ch-1"
+    state.new_mapping_enabled = True
+
+    state.add_mapping()
+
+    assert repo.added == [
+        ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)
+    ]
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
+    assert state.new_mapping_channel_id == ""
+    assert "Mapping added for web on channel ch-1." == state.status_message
+
+
+def test_add_mapping_validates_empty_channel_id() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "   "
+
+    state.add_mapping()
+
+    assert repo.added == []
+    assert list(state.mappings) == []
+    assert state.status_message == "Channel ID is required."
+
+
+def test_add_mapping_validates_missing_container() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(mapping_repo=repo)
+    state.new_mapping_channel_id = "ch-1"
+
+    state.add_mapping()
+
+    assert repo.added == []
+    assert state.status_message == "Select a container to map."
+
+
+def test_save_mapping_validates_empty_channel_id() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(mapping_repo=repo)
+
+    state.save_mapping("web", "  ", True, "")
+
+    assert repo.added == []
+    assert state.status_message == "Channel ID is required."
+
+
+def test_save_mapping_updates_channel_id_and_enabled() -> None:
+    repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.load_mappings()
+
+    state.save_mapping("web", "ch-2", False, "ch-1")
+
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-2",
+            "enabled": False,
+            "original_channel_id": "ch-2",
+        }
+    ]
+    assert repo.mappings_for_container("web") == [
+        ChannelMapping(container_name="web", channel_id="ch-2", enabled=False)
+    ]
+    assert state.status_message == "Mapping saved for web on channel ch-2."
+
+
+def test_load_mappings_reflects_persisted_changes_after_refresh() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "ch-1"
+    state.new_mapping_enabled = True
+    state.add_mapping()
+
+    reloaded = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    reloaded.load_mappings()
+
+    assert list(reloaded.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
