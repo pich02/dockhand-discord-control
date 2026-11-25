@@ -59,8 +59,12 @@ class SqliteChannelMappingRepository(ChannelMappingRepository):
         A channel can be mapped to at most one container. If the channel is
         already mapped to a different container, a :class:`ValueError` is
         raised.
+
+        The read-check-write runs in an immediate write transaction so concurrent
+        connections cannot silently bypass the conflict guard.
         """
         with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
             existing = self._conn.execute(
                 "SELECT container_name FROM channel_mappings WHERE channel_id = ?",
                 (mapping.channel_id,),

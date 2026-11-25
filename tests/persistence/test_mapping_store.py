@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 import pytest
 
@@ -265,5 +266,59 @@ def test_migration_v1_to_v2_resolves_conflicting_channel_rows(tmp_path) -> None:
         assert repo.get_mapping("ch-2") == ChannelMapping(
             container_name="db", channel_id="ch-2", enabled=False
         )
+    finally:
+        repo.close()
+
+
+def test_add_mapping_conflict_is_atomic_across_connections(tmp_path) -> None:
+    db_path = str(tmp_path / "app.sqlite")
+    seed_repo = SqliteChannelMappingRepository(db_path)
+    seed_repo.close()
+
+    barrier = threading.Barrier(2)
+    results: dict[str, str] = {}
+
+    def worker(name: str, container_name: str) -> None:
+        repo = SqliteChannelMappingRepository(db_path)
+        try:
+            repo._conn.execute("PRAGMA busy_timeout=5000")
+            barrier.wait(timeout=5)
+            repo.add_mapping(
+                ChannelMapping(
+                    container_name=container_name,
+                    channel_id="ch-1",
+                    enabled=True,
+                )
+            )
+            results[name] = "ok"
+        except ValueError as exc:
+            results[name] = str(exc)
+        finally:
+            repo.close()
+
+    t1 = threading.Thread(target=worker, args=("web", "web"))
+    t2 = threading.Thread(target=worker, args=("db", "db"))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert not t1.is_alive()
+    assert not t2.is_alive()
+    assert sorted(results) == ["db", "web"]
+    outcomes = sorted(results.values())
+    assert "ok" in outcomes
+    assert any("already mapped" in outcome for outcome in outcomes)
+
+    repo = SqliteChannelMappingRepository(db_path)
+    try:
+        mapping = repo.get_mapping("ch-1")
+        assert mapping is not None
+        assert mapping.channel_id == "ch-1"
+        assert mapping.container_name in {"web", "db"}
+        assert mapping.enabled is True
+        assert len(repo.mappings_for_container(mapping.container_name)) == 1
+        other = "db" if mapping.container_name == "web" else "web"
+        assert repo.mappings_for_container(other) == []
     finally:
         repo.close()
