@@ -82,6 +82,8 @@ pyright
 pytest
 ```
 
+GitHub Actions runs `tox -e lint` on pushes and pull requests (`.github/workflows/lint.yml`).
+
 Key conventions:
 - Line length 88, double quotes (ruff).
 - `import-linter` enforces layered architecture: `domain` must not depend on other internal modules; adapters depend only on `domain` (+ infra libs).

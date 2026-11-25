@@ -188,6 +188,7 @@ keeping the Dockhand API integration untouched.
 - `pytest` — unit tests under `tests/`.
 - `tox` — envs: `lint` (ruff check + ruff format --check + lint-imports),
   `types` (pyright), `test` (pytest); run via `tox -e lint`, `tox -e types`, `tox -e test`.
+- GitHub Actions — `.github/workflows/lint.yml` runs `tox -e lint` on pushes and pull requests.
 
 ## 9. Docker
 
