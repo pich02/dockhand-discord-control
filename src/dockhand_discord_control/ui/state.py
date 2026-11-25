@@ -195,10 +195,8 @@ class AppState(rx.State):
     def _settings_repo(self) -> _SettingsRepository:
         repo = self.__collaborators["settings_repo"]
         if repo is None:
-            from dockhand_discord_control.persistence import (
-                Settings,
-                SqliteSettingsRepository,
-            )
+            from dockhand_discord_control.config import Settings
+            from dockhand_discord_control.persistence import SqliteSettingsRepository
 
             repo = SqliteSettingsRepository(Settings().db_path)
             self.__collaborators["settings_repo"] = repo
@@ -207,8 +205,8 @@ class AppState(rx.State):
     def _mapping_repo(self) -> _ChannelMappingRepository:
         repo = self.__collaborators["mapping_repo"]
         if repo is None:
+            from dockhand_discord_control.config import Settings
             from dockhand_discord_control.persistence import (
-                Settings,
                 SqliteChannelMappingRepository,
             )
 
@@ -252,7 +250,7 @@ class AppState(rx.State):
     @staticmethod
     def _db_path() -> str:
         """Return the configured SQLite database path."""
-        from dockhand_discord_control.persistence import Settings
+        from dockhand_discord_control.config import Settings
 
         return Settings().db_path
 

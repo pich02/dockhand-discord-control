@@ -12,7 +12,8 @@ from pathlib import Path
 
 import reflex as rx
 
-from dockhand_discord_control.persistence import Settings, SqliteSettingsRepository
+from dockhand_discord_control.config import Settings
+from dockhand_discord_control.persistence import SqliteSettingsRepository
 
 from .bridge import discord_bridge
 from .pages import dashboard_page, mappings_page, settings_page

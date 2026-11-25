@@ -187,8 +187,9 @@ keeping the Dockhand API integration untouched.
 - Python 3.12–3.14, src layout (`src/dockhand_discord_control/`).
 - `ruff` — lint + format (`PEP8`), config in `pyproject.toml`.
 - `pyright` — type checking, config in `pyproject.toml` / `pyrightconfig.json`.
-- `importlinter` — contracts in `importlinter.yaml` / `pyproject.toml`
-  (domain isolation rules described above).
+- `importlinter` — contracts in `pyproject.toml` enforce the intended layering:
+  domain is isolated, adapters depend only on domain, adapters do not import
+  other adapters or ui, and config has no internal dependencies.
 - `pytest` — unit tests under `tests/`.
 - `tox` — envs: `lint` (ruff check + ruff format --check + lint-imports),
   `types` (pyright), `test` (pytest); run via `tox -e lint`, `tox -e types`, `tox -e test`.
