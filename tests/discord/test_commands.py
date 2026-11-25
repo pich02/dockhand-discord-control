@@ -148,7 +148,6 @@ def _make_handlers(
         start_use_case=StartContainerUseCase(client, repo),
         stop_use_case=StopContainerUseCase(client, repo),
         restart_use_case=RestartContainerUseCase(client, repo),
-        mapping_repo=repo,
     )
     return handlers, client, repo
 
@@ -173,7 +172,6 @@ def test_handle_status_reports_no_environments() -> None:
         start_use_case=StartContainerUseCase(client, repo),
         stop_use_case=StopContainerUseCase(client, repo),
         restart_use_case=RestartContainerUseCase(client, repo),
-        mapping_repo=repo,
     )
 
     reply = handlers.handle_status(_INTERACTION, "ch1")
@@ -199,7 +197,6 @@ def test_handle_list_reports_no_containers() -> None:
         start_use_case=StartContainerUseCase(client, repo),
         stop_use_case=StopContainerUseCase(client, repo),
         restart_use_case=RestartContainerUseCase(client, repo),
-        mapping_repo=repo,
     )
 
     reply = handlers.handle_list(_INTERACTION, "ch1")
@@ -258,7 +255,11 @@ def test_handle_start_stop_reject_unauthorized_channels(
 
     reply = getattr(handlers, method_name)(_INTERACTION, "ch1", container_name)
 
-    assert "not authorized" in reply.lower()
+    action = method_name.removeprefix("handle_")
+    assert reply == (
+        f"{action.capitalize()} failed: "
+        f"channel 'ch1' is not authorized for container 'web'"
+    )
     assert client.started == []
     assert client.stopped == []
     assert repo.looked_up == ["ch1"]
@@ -366,3 +367,59 @@ def test_handle_restart_start_client_error_renders_friendly_reply() -> None:
     assert client.started == ["web"]
     assert "restart failed" in reply.lower()
     assert "start rejected" in reply
+
+
+def test_handle_status_returns_friendly_reply_on_snapshot_failure() -> None:
+    class _FailingSnapshotClient:
+        def list_environments(self) -> list[DockhandEnvironment]:
+            raise DockhandClientError("server down")
+
+        def list_containers(self, environment_id: str) -> list[DockerContainer]:
+            return []
+
+        def start_container(self, container_id: str) -> ActionResult:
+            return ActionResult(ok=True, message="started")
+
+        def stop_container(self, container_id: str) -> ActionResult:
+            return ActionResult(ok=True, message="stopped")
+
+    client = _FailingSnapshotClient()
+    repo = _FakeMappingRepository()
+    handlers = DiscordCommandHandlers(
+        snapshot_use_case=SnapshotUseCase(client),
+        start_use_case=StartContainerUseCase(client, repo),
+        stop_use_case=StopContainerUseCase(client, repo),
+        restart_use_case=RestartContainerUseCase(client, repo),
+    )
+
+    reply = handlers.handle_status(_INTERACTION, "ch1")
+
+    assert reply == "Unable to reach Dockhand right now. Please try again later."
+
+
+def test_handle_list_returns_friendly_reply_on_snapshot_failure() -> None:
+    class _FailingSnapshotClient:
+        def list_environments(self) -> list[DockhandEnvironment]:
+            return _environments()
+
+        def list_containers(self, environment_id: str) -> list[DockerContainer]:
+            raise DockhandClientError("server down")
+
+        def start_container(self, container_id: str) -> ActionResult:
+            return ActionResult(ok=True, message="started")
+
+        def stop_container(self, container_id: str) -> ActionResult:
+            return ActionResult(ok=True, message="stopped")
+
+    client = _FailingSnapshotClient()
+    repo = _FakeMappingRepository()
+    handlers = DiscordCommandHandlers(
+        snapshot_use_case=SnapshotUseCase(client),
+        start_use_case=StartContainerUseCase(client, repo),
+        stop_use_case=StopContainerUseCase(client, repo),
+        restart_use_case=RestartContainerUseCase(client, repo),
+    )
+
+    reply = handlers.handle_list(_INTERACTION, "ch1")
+
+    assert reply == "Unable to reach Dockhand right now. Please try again later."

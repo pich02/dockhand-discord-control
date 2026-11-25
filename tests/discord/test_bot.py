@@ -55,7 +55,6 @@ def _make_handlers() -> DiscordCommandHandlers:
         start_use_case=StartContainerUseCase(client, repo),
         stop_use_case=StopContainerUseCase(client, repo),
         restart_use_case=RestartContainerUseCase(client, repo),
-        mapping_repo=repo,
     )
 
 

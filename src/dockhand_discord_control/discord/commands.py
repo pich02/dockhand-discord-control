@@ -14,10 +14,8 @@ directly.
 
 from __future__ import annotations
 
-from dockhand_discord_control.domain.models import ActionResult
-from dockhand_discord_control.domain.ports import ChannelMappingRepository
+from dockhand_discord_control.domain.exceptions import DockhandClientError
 from dockhand_discord_control.domain.use_cases import (
-    ContainerActionUseCase,
     RestartContainerUseCase,
     SnapshotUseCase,
     StartContainerUseCase,
@@ -25,6 +23,8 @@ from dockhand_discord_control.domain.use_cases import (
 )
 
 from . import rendering
+
+_SNAPSHOT_ERROR_MESSAGE = "Unable to reach Dockhand right now. Please try again later."
 
 
 class DiscordCommandHandlers:
@@ -37,79 +37,50 @@ class DiscordCommandHandlers:
         start_use_case: StartContainerUseCase,
         stop_use_case: StopContainerUseCase,
         restart_use_case: RestartContainerUseCase,
-        mapping_repo: ChannelMappingRepository,
     ) -> None:
         self._snapshot_use_case = snapshot_use_case
         self._start_use_case = start_use_case
         self._stop_use_case = stop_use_case
         self._restart_use_case = restart_use_case
-        self._mapping_repo = mapping_repo
 
     def handle_status(self, interaction: object, channel_id: str) -> str:
         """Render the status of all environments and containers."""
         del interaction  # owned by the Discord layer; the reply is returned as text
-        snapshot = self._snapshot_use_case.execute()
+        try:
+            snapshot = self._snapshot_use_case.execute()
+        except DockhandClientError:
+            return _SNAPSHOT_ERROR_MESSAGE
         return rendering.render_snapshot(snapshot)
 
     def handle_list(self, interaction: object, channel_id: str) -> str:
         """Render the list of all containers."""
         del interaction  # owned by the Discord layer; the reply is returned as text
-        snapshot = self._snapshot_use_case.execute()
+        try:
+            snapshot = self._snapshot_use_case.execute()
+        except DockhandClientError:
+            return _SNAPSHOT_ERROR_MESSAGE
         return rendering.render_container_list(snapshot.containers)
 
     def handle_start(
         self, interaction: object, channel_id: str, container_name: str
     ) -> str:
-        """Authorize the channel for the container, then start it."""
+        """Start a container authorized for this channel."""
         del interaction  # owned by the Discord layer; the reply is returned as text
-        result = self._authorized_container_action(
-            channel_id, container_name, self._start_use_case
-        )
+        result = self._start_use_case.execute(channel_id, container_name)
         return rendering.render_action_result(result, "start")
 
     def handle_stop(
         self, interaction: object, channel_id: str, container_name: str
     ) -> str:
-        """Authorize the channel for the container, then stop it."""
+        """Stop a container authorized for this channel."""
         del interaction  # owned by the Discord layer; the reply is returned as text
-        result = self._authorized_container_action(
-            channel_id, container_name, self._stop_use_case
-        )
+        result = self._stop_use_case.execute(channel_id, container_name)
         return rendering.render_action_result(result, "stop")
 
     def handle_restart(
         self, interaction: object, channel_id: str, container_name: str
     ) -> str:
-        """Restart (stop and start) a container through the authorized channel."""
+        """Restart a container authorized for this channel."""
         del interaction  # owned by the Discord layer; the reply is returned as text
-        result = self._authorized_container_action(
-            channel_id, container_name, self._restart_use_case
-        )
+        result = self._restart_use_case.execute(channel_id, container_name)
         return rendering.render_action_result(result, "restart")
-
-    def _authorized_container_action(
-        self,
-        channel_id: str,
-        container_name: str,
-        action: ContainerActionUseCase,
-    ) -> ActionResult:
-        """Authorize the channel for the container, then perform the action.
-
-        A channel is authorized when it has an enabled mapping for exactly
-        this container name. Otherwise a failed :class:`ActionResult` is
-        returned and no dockhand call is made.
-        """
-        mapping = self._mapping_repo.get_mapping(channel_id)
-        if (
-            mapping is None
-            or not mapping.enabled
-            or mapping.container_name != container_name
-        ):
-            return ActionResult(
-                ok=False,
-                message=(
-                    f"not authorized: channel {channel_id!r} is not enabled "
-                    f"for container {container_name!r}"
-                ),
-            )
-        return action.execute(channel_id, container_name)

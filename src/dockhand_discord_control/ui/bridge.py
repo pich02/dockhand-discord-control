@@ -333,7 +333,6 @@ class DiscordBridge:
             start_use_case=StartContainerUseCase(client, mapping_repo),
             stop_use_case=StopContainerUseCase(client, mapping_repo),
             restart_use_case=RestartContainerUseCase(client, mapping_repo),
-            mapping_repo=mapping_repo,
         )
         return handlers, client, mapping_repo
 
