@@ -7,7 +7,7 @@ name = "dockhand-discord-control"
 version = "0.1.0"
 description = "Discord bot and Reflex web UI for controlling a self-hosted Dockhand server."
 readme = "README.md"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 dependencies = [
     "reflex",
     "discord.py",
@@ -31,7 +31,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]

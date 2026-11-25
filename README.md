@@ -4,7 +4,7 @@ Discord bot and Reflex web UI for controlling a self-hosted Dockhand server.
 
 ## Requirements
 
-- Python 3.12 or 3.13
+- Python 3.12, 3.13, or 3.14
 - `docker` and `docker compose` (for the Docker install)
 - A running Dockhand server and a Discord bot token
 
