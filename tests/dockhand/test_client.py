@@ -186,3 +186,50 @@ def test_trailing_slash_base_url_is_normalized():
     )
 
     assert client.list_environments() == []
+
+
+def test_default_timeout_is_set_on_owned_client():
+    client = DockhandApiClient(_BASE_URL, _TOKEN)
+    try:
+        assert client._client.timeout == httpx.Timeout(10.0)
+    finally:
+        client.close()
+
+
+def test_close_closes_owned_client():
+    client = DockhandApiClient(_BASE_URL, _TOKEN)
+    assert not client._client.is_closed
+
+    client.close()
+
+    assert client._client.is_closed
+
+
+def test_close_does_not_close_injected_client():
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[]))
+    injected = httpx.Client(transport=transport)
+    client = DockhandApiClient(_BASE_URL, _TOKEN, client=injected)
+
+    client.close()
+
+    assert not injected.is_closed
+    injected.close()
+
+
+def test_context_manager_closes_owned_client():
+    with DockhandApiClient(_BASE_URL, _TOKEN) as client:
+        owned = client._client
+        assert not owned.is_closed
+
+    assert owned.is_closed
+
+
+def test_context_manager_does_not_close_injected_client():
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[]))
+    injected = httpx.Client(transport=transport)
+
+    with DockhandApiClient(_BASE_URL, _TOKEN, client=injected) as client:
+        assert client._client is injected
+
+    assert not injected.is_closed
+    injected.close()

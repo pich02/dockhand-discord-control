@@ -50,3 +50,11 @@ def test_mappings_page_has_nav_links() -> None:
     assert 'to:"/"' in rendered
     assert 'to:"/settings"' in rendered
     assert 'to:"/mappings"' in rendered
+
+
+def test_mappings_page_has_add_mapping_flow() -> None:
+    rendered = _rendered(mappings_page())
+    assert "Add mapping" in rendered
+    assert "Discord channel ID" in rendered
+    assert "Select container" in rendered
+    assert "Refresh mappings" in rendered

@@ -17,7 +17,6 @@ from collections.abc import Callable
 from typing import Any, Protocol, TypedDict
 
 import reflex as rx
-from reflex.state import BaseState
 
 from dockhand_discord_control.domain.models import (
     ChannelMapping,
@@ -88,6 +87,8 @@ class _ChannelMappingRepository(Protocol):
 
     def set_enabled(self, channel_id: str, enabled: bool) -> None: ...
 
+    def remove_mapping(self, channel_id: str) -> None: ...
+
 
 class _SnapshotUseCase(Protocol):
     """Snapshot use case used by the UI."""
@@ -119,6 +120,7 @@ class _Mapping(TypedDict):
     container_name: str
     channel_id: str
     enabled: bool
+    original_channel_id: str
 
 
 class AppState(rx.State):
@@ -133,32 +135,32 @@ class AppState(rx.State):
     status_message: str = ""
     discord_bot_status: str = ""
     mappings: list[_Mapping] = []
+    new_mapping_container_name: str = ""
+    new_mapping_channel_id: str = ""
+    new_mapping_enabled: bool = True
 
-    def __init__(
-        self,
-        parent_state: BaseState | None = None,
-        init_substates: bool = True,
-        _reflex_internal_init: bool = False,
-        settings_repo: _SettingsRepository | None = None,
-        mapping_repo: _ChannelMappingRepository | None = None,
-        snapshot_use_case: _SnapshotUseCase | None = None,
-        discord_bridge: _DiscordBridge | None = None,
-        token_verifier: Callable[[str], str | None] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        # Forward the Reflex-internal init flags so the framework can
-        # instantiate the state directly during compilation (e.g.
-        # ``compile_state`` calls ``state(_reflex_internal_init=True)``)
-        # without tripping the "do not instantiate state directly" guard.
-        self._init_bookkeeping(parent_state)
-        # pyright cannot infer pydantic's dynamically generated ``__init__``
-        # signature, so these legitimate Reflex-internal flags are ignored here.
-        super().__init__(
-            parent_state=parent_state,
-            init_substates=init_substates,  # type: ignore[call-arg]
-            _reflex_internal_init=_reflex_internal_init,  # type: ignore[call-arg]
-            **kwargs,
-        )
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        settings_repo = kwargs.pop("settings_repo", None)
+        mapping_repo = kwargs.pop("mapping_repo", None)
+        snapshot_use_case = kwargs.pop("snapshot_use_case", None)
+        discord_bridge = kwargs.pop("discord_bridge", None)
+        token_verifier = kwargs.pop("token_verifier", None)
+
+        if args:
+            parent_state = args[0]
+            if len(args) >= 2:
+                kwargs.setdefault("init_substates", args[1])
+            if len(args) >= 3:
+                kwargs.setdefault("_reflex_internal_init", args[2])
+        else:
+            parent_state = kwargs.get("parent_state")
+
+        init_bookkeeping = getattr(self, "_init_bookkeeping", None)
+        if callable(init_bookkeeping):
+            init_bookkeeping(parent_state)
+
+        super().__init__(*args, **kwargs)
+
         # Dependency-injected collaborators.  They live in a single instance
         # attribute that is not a class field, so Reflex does not treat them
         # as state vars and does not try to serialize them.
@@ -192,10 +194,8 @@ class AppState(rx.State):
     def _settings_repo(self) -> _SettingsRepository:
         repo = self.__collaborators["settings_repo"]
         if repo is None:
-            from dockhand_discord_control.persistence import (
-                Settings,
-                SqliteSettingsRepository,
-            )
+            from dockhand_discord_control.config import Settings
+            from dockhand_discord_control.persistence import SqliteSettingsRepository
 
             repo = SqliteSettingsRepository(Settings().db_path)
             self.__collaborators["settings_repo"] = repo
@@ -204,8 +204,8 @@ class AppState(rx.State):
     def _mapping_repo(self) -> _ChannelMappingRepository:
         repo = self.__collaborators["mapping_repo"]
         if repo is None:
+            from dockhand_discord_control.config import Settings
             from dockhand_discord_control.persistence import (
-                Settings,
                 SqliteChannelMappingRepository,
             )
 
@@ -249,7 +249,7 @@ class AppState(rx.State):
     @staticmethod
     def _db_path() -> str:
         """Return the configured SQLite database path."""
-        from dockhand_discord_control.persistence import Settings
+        from dockhand_discord_control.config import Settings
 
         return Settings().db_path
 
@@ -274,7 +274,7 @@ class AppState(rx.State):
         self.status_message = "Settings loaded."
 
     @rx.event
-    async def save_settings(self) -> None:
+    async def save_settings(self):  # type: ignore[override]
         """Persist dockhand and Discord settings, then verify the connections.
 
         The handler is asynchronous because the verification steps talk to the
@@ -307,6 +307,7 @@ class AppState(rx.State):
                 self.status_message = "Dockhand base URL and API token are required."
                 return
             self.status_message = "Saving settings..."
+            yield
             repo = self._settings_repo()
             logger.info("save_settings: writing the settings to %s", self._db_path())
             repo.set_dockhand_settings(base_url, api_token)
@@ -321,7 +322,17 @@ class AppState(rx.State):
         self.dockhand_api_token = api_token
         # The Dockhand client is rebuilt from the saved values.
         if self.__collaborators["owns_snapshot_use_case"]:
+            old_use_case = self.__collaborators["snapshot_use_case"]
             self.__collaborators["snapshot_use_case"] = None
+            old_client = getattr(old_use_case, "_client", None)
+            close = getattr(old_client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # pragma: no cover - best effort
+                    logger.warning(
+                        "Dockhand client did not close cleanly", exc_info=True
+                    )
         try:
             # Resolve the use case on the event loop thread; the worker only
             # calls it, so the cached use case is never mutated off-loop.
@@ -432,6 +443,23 @@ class AppState(rx.State):
     def set_discord_guild_id(self, value: str) -> None:
         self.discord_guild_id = _text(value)
 
+    @rx.event
+    def set_new_mapping_container_name(self, value: str) -> None:
+        self.new_mapping_container_name = _text(value)
+
+    @rx.event
+    def set_new_mapping_channel_id(self, value: str) -> None:
+        self.new_mapping_channel_id = _text(value)
+
+    @rx.event
+    def set_new_mapping_enabled(self, value: bool) -> None:
+        self.new_mapping_enabled = bool(value)
+
+    @rx.var
+    def container_names(self) -> list[str]:
+        """Names of known containers, for the add-mapping selector."""
+        return [container.name for container in self.containers]
+
     # -- mappings ---------------------------------------------------------
 
     @rx.event
@@ -447,6 +475,7 @@ class AppState(rx.State):
                             container_name=mapping.container_name,
                             channel_id=mapping.channel_id,
                             enabled=mapping.enabled,
+                            original_channel_id=mapping.channel_id,
                         )
                     )
         except Exception as exc:
@@ -457,8 +486,17 @@ class AppState(rx.State):
         self.status_message = f"Loaded {len(loaded)} mapping(s)."
 
     @rx.event
-    def save_mapping(self, container_name: str, channel_id: str, enabled: bool) -> None:
-        """Upsert a channel mapping and refresh the in-state list."""
+    def add_mapping(self) -> None:
+        """Create a mapping from the add-mapping form."""
+        container_name = _text(self.new_mapping_container_name)
+        channel_id = _text(self.new_mapping_channel_id)
+        enabled = bool(self.new_mapping_enabled)
+        if not container_name:
+            self.status_message = "Select a container to map."
+            return
+        if not channel_id:
+            self.status_message = "Channel ID is required."
+            return
         try:
             repo = self._mapping_repo()
             repo.add_mapping(
@@ -469,13 +507,108 @@ class AppState(rx.State):
                 )
             )
         except Exception as exc:
+            logger.exception("add_mapping failed")
+            self.status_message = f"Failed to add mapping: {exc}"
+            return
+        self.new_mapping_channel_id = ""
+        self._upsert_mapping(container_name, channel_id, enabled)
+        self.status_message = (
+            f"Mapping added for {container_name} on channel {channel_id}."
+        )
+
+    @rx.event
+    def save_mapping(
+        self,
+        container_name: str,
+        channel_id: str,
+        enabled: bool,
+        original_channel_id: str = "",
+    ) -> None:
+        """Upsert a channel mapping and refresh the in-state list."""
+        container_name = _text(container_name)
+        channel_id = _text(channel_id)
+        original_channel_id = _text(original_channel_id)
+        if not container_name:
+            self.status_message = "Container name is required."
+            return
+        if not channel_id:
+            self.status_message = "Channel ID is required."
+            return
+        new_mapping_persisted = False
+        try:
+            repo = self._mapping_repo()
+            repo.add_mapping(
+                ChannelMapping(
+                    container_name=container_name,
+                    channel_id=channel_id,
+                    enabled=enabled,
+                )
+            )
+            new_mapping_persisted = True
+            if original_channel_id and original_channel_id != channel_id:
+                repo.remove_mapping(original_channel_id)
+        except Exception as exc:
             logger.exception("save_mapping failed")
+            if new_mapping_persisted:
+                try:
+                    self.load_mappings()
+                except Exception:  # pragma: no cover - best effort reload
+                    logger.exception("save_mapping reload after partial write failed")
             self.status_message = f"Failed to save mapping: {exc}"
             return
-        self._upsert_mapping(container_name, channel_id, enabled)
+        self._upsert_mapping(
+            container_name,
+            channel_id,
+            enabled,
+            original_channel_id=original_channel_id or channel_id,
+        )
         self.status_message = (
             f"Mapping saved for {container_name} on channel {channel_id}."
         )
+
+    @rx.event
+    def update_mapping_channel_id(self, index: int, value: str) -> None:
+        """Update the channel_id draft for a mapping row."""
+        if index < 0 or index >= len(self.mappings):
+            return
+        updated: list[_Mapping] = []
+        for i, current in enumerate(self.mappings):
+            if i == index:
+                updated.append(
+                    _Mapping(
+                        container_name=current["container_name"],
+                        channel_id=_text(value),
+                        enabled=current["enabled"],
+                        original_channel_id=current.get(
+                            "original_channel_id", current["channel_id"]
+                        ),
+                    )
+                )
+            else:
+                updated.append(_Mapping(**current))
+        self.mappings = updated
+
+    @rx.event
+    def update_mapping_enabled(self, index: int, value: bool) -> None:
+        """Update the enabled draft for a mapping row."""
+        if index < 0 or index >= len(self.mappings):
+            return
+        updated: list[_Mapping] = []
+        for i, current in enumerate(self.mappings):
+            if i == index:
+                updated.append(
+                    _Mapping(
+                        container_name=current["container_name"],
+                        channel_id=current["channel_id"],
+                        enabled=bool(value),
+                        original_channel_id=current.get(
+                            "original_channel_id", current["channel_id"]
+                        ),
+                    )
+                )
+            else:
+                updated.append(_Mapping(**current))
+        self.mappings = updated
 
     @rx.event
     def toggle_mapping(self, container_name: str, channel_id: str) -> None:
@@ -495,6 +628,9 @@ class AppState(rx.State):
                         container_name=container_name,
                         channel_id=channel_id,
                         enabled=new_enabled,
+                        original_channel_id=current.get(
+                            "original_channel_id", channel_id
+                        ),
                     )
                 )
             else:
@@ -518,17 +654,26 @@ class AppState(rx.State):
         )
 
     def _upsert_mapping(
-        self, container_name: str, channel_id: str, enabled: bool
+        self,
+        container_name: str,
+        channel_id: str,
+        enabled: bool,
+        original_channel_id: str = "",
     ) -> None:
+        match_channel_id = _text(original_channel_id) or channel_id
         entry = _Mapping(
-            container_name=container_name, channel_id=channel_id, enabled=enabled
+            container_name=container_name,
+            channel_id=channel_id,
+            enabled=enabled,
+            original_channel_id=channel_id,
         )
         updated = False
         new_mappings: list[_Mapping] = []
         for current in self.mappings:
+            current_original = current.get("original_channel_id", current["channel_id"])
             if (
                 current["container_name"] == container_name
-                and current["channel_id"] == channel_id
+                and current_original == match_channel_id
             ):
                 new_mappings.append(entry)
                 updated = True

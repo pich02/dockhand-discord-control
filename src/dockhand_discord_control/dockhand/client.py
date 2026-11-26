@@ -4,6 +4,8 @@ Implements :class:`dockhand_discord_control.domain.ports.DockhandClient` on top
 of :mod:`httpx`, using bearer-token authentication.
 """
 
+from __future__ import annotations
+
 from typing import Any
 
 import httpx
@@ -23,7 +25,13 @@ class DockhandApiClient(DockhandClient):
 
     Every request carries ``Authorization: Bearer <api_token>``. Endpoint paths
     are joined to ``base_url``, so callers only need the server root URL.
+
+    The client owns its underlying :class:`httpx.Client` when one is not
+    injected. Injected clients are left open by :meth:`close`.
     """
+
+    #: Sensible default timeout for HTTP requests to the Dockhand API.
+    DEFAULT_TIMEOUT = 10.0
 
     # TODO: The exact Dockhand REST API surface is unconfirmed (research item,
     # see docs/ARCHITECTURE.md §10). Endpoint shapes below are reversible
@@ -45,7 +53,19 @@ class DockhandApiClient(DockhandClient):
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_token = api_token
-        self._client = client or httpx.Client()
+        self._owns_client = client is None
+        self._client = client or httpx.Client(timeout=self.DEFAULT_TIMEOUT)
+
+    def close(self) -> None:
+        """Close the underlying HTTP client when this instance owns it."""
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> DockhandApiClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     def _url(self, path: str) -> str:
         """Join ``base_url`` with an endpoint path."""

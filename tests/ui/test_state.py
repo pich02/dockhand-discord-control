@@ -11,6 +11,7 @@ import inspect
 import pickle
 import threading
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -84,6 +85,12 @@ class FakeMappingRepository:
         ]
 
     def add_mapping(self, mapping: ChannelMapping) -> None:
+        existing = self._mappings.get(mapping.channel_id)
+        if existing is not None and existing.container_name != mapping.container_name:
+            raise ValueError(
+                f"channel {mapping.channel_id!r} is already mapped to "
+                f"container {existing.container_name!r}"
+            )
         self.added.append(mapping)
         self._mappings[mapping.channel_id] = mapping
 
@@ -96,6 +103,9 @@ class FakeMappingRepository:
                 channel_id=channel_id,
                 enabled=enabled,
             )
+
+    def remove_mapping(self, channel_id: str) -> None:
+        self._mappings.pop(channel_id, None)
 
 
 class FakeSnapshotUseCase:
@@ -202,7 +212,7 @@ def test_save_settings_persists_to_repository() -> None:
     state.discord_bot_token = "bot-token"
     state.discord_guild_id = "guild-1"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert repo.saved_dockhand == ("http://dockhand:8080", "dockhand-secret")
     assert repo.saved_discord == "bot-token"
@@ -223,7 +233,7 @@ def test_save_settings_starts_the_discord_bridge() -> None:
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bot-token"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert len(bridge.started) == 1
     assert bridge.started[0]["token"] == "bot-token"
@@ -243,7 +253,7 @@ def test_save_settings_reports_token_check_warning() -> None:
     state.dockhand_api_token = "dockhand-secret"
     state.discord_bot_token = "bad-token"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert "Token check: the Discord bot token was rejected" in state.status_message
 
@@ -259,7 +269,7 @@ def test_save_settings_reports_dockhand_connection_failure() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert "Dockhand connection failed" in state.status_message
     assert "connection refused" in state.status_message
@@ -282,7 +292,7 @@ def test_save_settings_reports_persistence_failure() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert "Failed to save settings" in state.status_message
     assert "database is locked" in state.status_message
@@ -300,15 +310,30 @@ def test_save_settings_without_token_stops_the_bridge() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert bridge.stopped
     assert bridge.started == []
     assert "no bot token configured" in state.status_message
 
 
+async def _run(handler: Any, *args: Any, **kwargs: Any) -> None:
+    result = handler(*args, **kwargs)
+    if inspect.isasyncgen(result):
+        async for _ in result:
+            pass
+        return
+    if inspect.iscoroutine(result):
+        await result
+        return
+    if result is not None:
+        raise AssertionError(f"Unexpected handler result: {result!r}")
+
+
 def test_save_settings_is_a_coroutine_handler() -> None:
-    assert inspect.iscoroutinefunction(AppState.save_settings.fn)
+    assert inspect.isasyncgenfunction(
+        AppState.save_settings.fn
+    ) or inspect.iscoroutinefunction(AppState.save_settings.fn)
     assert inspect.iscoroutinefunction(AppState.refresh_status.fn)
     assert inspect.iscoroutinefunction(AppState.load_dashboard.fn)
     assert inspect.iscoroutinefunction(AppState.load_mappings_page.fn)
@@ -323,12 +348,18 @@ def test_event_handlers_are_registered() -> None:
         "load_mappings_page",
         "refresh_status",
         "load_mappings",
+        "add_mapping",
         "save_mapping",
         "toggle_mapping",
+        "update_mapping_channel_id",
+        "update_mapping_enabled",
         "set_dockhand_base_url",
         "set_dockhand_api_token",
         "set_discord_bot_token",
         "set_discord_guild_id",
+        "set_new_mapping_container_name",
+        "set_new_mapping_channel_id",
+        "set_new_mapping_enabled",
     }
     assert expected.issubset(set(AppState.event_handlers))
 
@@ -351,7 +382,7 @@ def test_save_settings_runs_the_dockhand_call_off_the_event_loop() -> None:
     state.dockhand_base_url = "http://dockhand:8080"
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert threads
     assert threads[0] != threading.get_ident()
@@ -391,7 +422,7 @@ def test_save_settings_validates_required_fields() -> None:
     state = AppState(settings_repo=repo)
     state.dockhand_api_token = "dockhand-secret"
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert repo.saved_dockhand is None
     assert repo.saved_discord is None
@@ -435,7 +466,7 @@ def test_save_settings_with_null_values_reports_instead_of_raising() -> None:
     state.dockhand_base_url = None  # type: ignore[assignment]
     state.dockhand_api_token = None  # type: ignore[assignment]
 
-    asyncio.run(state.save_settings())
+    asyncio.run(_run(state.save_settings))
 
     assert repo.saved_dockhand is None
     assert "Dockhand base URL and API token are required." in state.status_message
@@ -445,22 +476,60 @@ def test_save_mapping_creates_and_updates() -> None:
     repo = FakeMappingRepository()
     state = AppState(mapping_repo=repo)
 
-    state.save_mapping("web", "ch-1", True)
+    state.save_mapping("web", "ch-1", True, "")
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
     assert repo.added == [
         ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)
     ]
 
-    state.save_mapping("web", "ch-1", False)
+    state.save_mapping("web", "ch-1", False, "")
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": False}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": False,
+            "original_channel_id": "ch-1",
+        }
     ]
     # Upserted, not duplicated.
     assert len(state.mappings) == 1
+
+
+def test_save_mapping_rejects_conflicting_channel_assignment() -> None:
+    repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(mapping_repo=repo)
+    state.mappings = [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
+
+    state.save_mapping("db", "ch-1", True, "")
+
+    assert "Failed to save mapping" in state.status_message
+    assert "already mapped" in state.status_message
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
 
 
 def test_toggle_mapping_flips_enabled_and_persists() -> None:
@@ -468,12 +537,24 @@ def test_toggle_mapping_flips_enabled_and_persists() -> None:
         mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
     )
     state = AppState(mapping_repo=repo)
-    state.mappings = [{"container_name": "web", "channel_id": "ch-1", "enabled": True}]
+    state.mappings = [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
 
     state.toggle_mapping("web", "ch-1")
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": False}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": False,
+            "original_channel_id": "ch-1",
+        }
     ]
     assert repo.set_enabled_calls == [("ch-1", False)]
 
@@ -481,7 +562,12 @@ def test_toggle_mapping_flips_enabled_and_persists() -> None:
 
     assert state.mappings[0]["enabled"] is True
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
     assert repo.set_enabled_calls == [("ch-1", False), ("ch-1", True)]
 
@@ -515,8 +601,18 @@ def test_load_mappings_uses_containers_and_repository() -> None:
     state.load_mappings()
 
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True},
-        {"container_name": "api", "channel_id": "ch-2", "enabled": False},
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        },
+        {
+            "container_name": "api",
+            "channel_id": "ch-2",
+            "enabled": False,
+            "original_channel_id": "ch-2",
+        },
     ]
     assert "2 mapping(s)" in state.status_message
 
@@ -571,7 +667,12 @@ def test_load_mappings_page_loads_containers_and_mappings() -> None:
 
     assert list(state.containers) == [container]
     assert list(state.mappings) == [
-        {"container_name": "web", "channel_id": "ch-1", "enabled": True}
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
     ]
 
 
@@ -609,3 +710,212 @@ def test_refresh_status_reports_failure_without_crashing() -> None:
     assert list(state.containers) == []
     assert "Failed to refresh status" in state.status_message
     assert "down" in state.status_message
+
+
+def test_add_mapping_creates_from_empty() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "ch-1"
+    state.new_mapping_enabled = True
+
+    state.add_mapping()
+
+    assert repo.added == [
+        ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)
+    ]
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
+    assert state.new_mapping_channel_id == ""
+    assert "Mapping added for web on channel ch-1." == state.status_message
+
+
+def test_add_mapping_validates_empty_channel_id() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "   "
+
+    state.add_mapping()
+
+    assert repo.added == []
+    assert list(state.mappings) == []
+    assert state.status_message == "Channel ID is required."
+
+
+def test_add_mapping_validates_missing_container() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(mapping_repo=repo)
+    state.new_mapping_channel_id = "ch-1"
+
+    state.add_mapping()
+
+    assert repo.added == []
+    assert state.status_message == "Select a container to map."
+
+
+def test_save_mapping_validates_empty_channel_id() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(mapping_repo=repo)
+
+    state.save_mapping("web", "  ", True, "")
+
+    assert repo.added == []
+    assert state.status_message == "Channel ID is required."
+
+
+def test_save_mapping_updates_channel_id_and_enabled() -> None:
+    repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.load_mappings()
+
+    state.save_mapping("web", "ch-2", False, "ch-1")
+
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-2",
+            "enabled": False,
+            "original_channel_id": "ch-2",
+        }
+    ]
+    assert repo.mappings_for_container("web") == [
+        ChannelMapping(container_name="web", channel_id="ch-2", enabled=False)
+    ]
+    assert state.status_message == "Mapping saved for web on channel ch-2."
+
+
+def test_load_mappings_reflects_persisted_changes_after_refresh() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "ch-1"
+    state.new_mapping_enabled = True
+    state.add_mapping()
+
+    reloaded = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    reloaded.load_mappings()
+
+    assert list(reloaded.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        }
+    ]
+
+
+def test_add_mapping_creates_disabled_mapping_from_form() -> None:
+    repo = FakeMappingRepository()
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.new_mapping_container_name = "web"
+    state.new_mapping_channel_id = "ch-1"
+    state.new_mapping_enabled = False
+
+    state.add_mapping()
+
+    assert repo.added == [
+        ChannelMapping(container_name="web", channel_id="ch-1", enabled=False)
+    ]
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": False,
+            "original_channel_id": "ch-1",
+        }
+    ]
+
+
+def test_add_mapping_preserves_unsaved_drafts() -> None:
+    repo = FakeMappingRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1"), _container("c2", "api", "e1")],
+    )
+    state.load_mappings()
+    state.update_mapping_channel_id(0, "draft-ch")
+
+    state.new_mapping_container_name = "api"
+    state.new_mapping_channel_id = "ch-2"
+    state.new_mapping_enabled = True
+    state.add_mapping()
+
+    assert list(state.mappings) == [
+        {
+            "container_name": "web",
+            "channel_id": "draft-ch",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        },
+        {
+            "container_name": "api",
+            "channel_id": "ch-2",
+            "enabled": True,
+            "original_channel_id": "ch-2",
+        },
+    ]
+
+
+def test_save_mapping_rename_partial_failure_reloads_persisted_state() -> None:
+    class FailingRemoveRepository(FakeMappingRepository):
+        def remove_mapping(self, channel_id: str) -> None:
+            raise RuntimeError("remove failed")
+
+    repo = FailingRemoveRepository(
+        mappings=[ChannelMapping(container_name="web", channel_id="ch-1", enabled=True)]
+    )
+    state = AppState(
+        mapping_repo=repo,
+        containers=[_container("c1", "web", "e1")],
+    )
+    state.load_mappings()
+
+    state.save_mapping("web", "ch-2", False, "ch-1")
+
+    assert "Failed to save mapping" in state.status_message
+    assert "remove failed" in state.status_message
+    assert sorted(state.mappings, key=lambda m: m["channel_id"]) == [
+        {
+            "container_name": "web",
+            "channel_id": "ch-1",
+            "enabled": True,
+            "original_channel_id": "ch-1",
+        },
+        {
+            "container_name": "web",
+            "channel_id": "ch-2",
+            "enabled": False,
+            "original_channel_id": "ch-2",
+        },
+    ]

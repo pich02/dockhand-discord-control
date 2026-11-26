@@ -311,3 +311,185 @@ def test_bridge_restarts_with_a_new_token(tmp_path: Path) -> None:
     assert FakeBot.instances[1].logged_in.wait(timeout=5)
     assert FakeBot.instances[1].token == "second-token"
     bridge.stop()
+
+
+class _TrackingClient:
+    instances: list[_TrackingClient] = []
+
+    def __init__(
+        self,
+        base_url: str,
+        api_token: str,
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.base_url = base_url
+        self.api_token = api_token
+        self.client = client
+        self.closed = False
+        _TrackingClient.instances.append(self)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _TrackingMappingRepo:
+    instances: list[_TrackingMappingRepo] = []
+
+    def __init__(self, db_path: str = "./data/app.sqlite") -> None:
+        self.db_path = db_path
+        self.closed = False
+        _TrackingMappingRepo.instances.append(self)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_bridge_stop_closes_created_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _TrackingClient.instances = []
+    _TrackingMappingRepo.instances = []
+    monkeypatch.setattr(bridge_module, "DockhandApiClient", _TrackingClient)
+    monkeypatch.setattr(
+        bridge_module, "SqliteChannelMappingRepository", _TrackingMappingRepo
+    )
+    bridge = DiscordBridge()
+
+    bridge.start(
+        token="bot-token",
+        guild_id=None,
+        base_url="http://dockhand:8080",
+        api_token="dockhand-secret",
+        db_path=str(tmp_path / "app.sqlite"),
+    )
+    assert FakeBot.instances[0].logged_in.wait(timeout=5)
+
+    bridge.stop()
+
+    assert len(_TrackingClient.instances) == 1
+    assert len(_TrackingMappingRepo.instances) == 1
+    assert _TrackingClient.instances[0].closed
+    assert _TrackingMappingRepo.instances[0].closed
+
+
+def test_bridge_restart_closes_old_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _TrackingClient.instances = []
+    _TrackingMappingRepo.instances = []
+    monkeypatch.setattr(bridge_module, "DockhandApiClient", _TrackingClient)
+    monkeypatch.setattr(
+        bridge_module, "SqliteChannelMappingRepository", _TrackingMappingRepo
+    )
+    bridge = DiscordBridge()
+    common = {
+        "token": "bot-token",
+        "guild_id": None,
+        "api_token": "dockhand-secret",
+        "db_path": str(tmp_path / "app.sqlite"),
+    }
+
+    bridge.start(base_url="http://dockhand:8080", **common)
+    assert FakeBot.instances[0].logged_in.wait(timeout=5)
+    bridge.start(base_url="http://other:9000", **common)
+    assert FakeBot.instances[1].logged_in.wait(timeout=5)
+
+    assert _TrackingClient.instances[0].closed
+    assert _TrackingMappingRepo.instances[0].closed
+    assert not _TrackingClient.instances[1].closed
+    assert not _TrackingMappingRepo.instances[1].closed
+
+    bridge.stop()
+
+    assert _TrackingClient.instances[1].closed
+    assert _TrackingMappingRepo.instances[1].closed
+
+
+def test_bridge_start_failure_closes_created_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _TrackingClient.instances = []
+    _TrackingMappingRepo.instances = []
+    monkeypatch.setattr(bridge_module, "DockhandApiClient", _TrackingClient)
+    monkeypatch.setattr(
+        bridge_module, "SqliteChannelMappingRepository", _TrackingMappingRepo
+    )
+
+    class BrokenBot(FakeBot):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            super().__init__(**kwargs)  # type: ignore[arg-type]
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(bridge_module, "DiscordBot", BrokenBot)
+    bridge = DiscordBridge()
+
+    started, message = bridge.start(
+        token="bot-token",
+        guild_id=None,
+        base_url="http://dockhand:8080",
+        api_token="dockhand-secret",
+        db_path=str(tmp_path / "app.sqlite"),
+    )
+
+    assert not started
+    assert "boom" in message
+    assert len(_TrackingClient.instances) == 1
+    assert len(_TrackingMappingRepo.instances) == 1
+    assert _TrackingClient.instances[0].closed
+    assert _TrackingMappingRepo.instances[0].closed
+
+
+class _CrashingBot(FakeBot):
+    proceed = threading.Event()
+
+    async def start(self, token: str) -> None:
+        self._stop = asyncio.Event()
+        self.logged_in.set()
+        while not self.proceed.is_set():
+            await asyncio.sleep(0.05)
+        raise RuntimeError("runtime boom")
+
+
+def test_bridge_restart_after_runtime_crash_closes_stale_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _TrackingClient.instances = []
+    _TrackingMappingRepo.instances = []
+    _CrashingBot.proceed = threading.Event()
+    monkeypatch.setattr(bridge_module, "DiscordBot", _CrashingBot)
+    monkeypatch.setattr(bridge_module, "DockhandApiClient", _TrackingClient)
+    monkeypatch.setattr(
+        bridge_module, "SqliteChannelMappingRepository", _TrackingMappingRepo
+    )
+    bridge = DiscordBridge()
+    kwargs = {
+        "token": "bot-token",
+        "guild_id": None,
+        "base_url": "http://dockhand:8080",
+        "api_token": "dockhand-secret",
+        "db_path": str(tmp_path / "app.sqlite"),
+    }
+
+    started, _message = bridge.start(**kwargs)
+    assert started
+    assert _CrashingBot.instances[0].logged_in.wait(timeout=5)
+
+    _CrashingBot.proceed.set()
+    for _attempt in range(100):
+        if not bridge.is_running() and bridge.error() is not None:
+            break
+        threading.Event().wait(0.05)
+
+    assert not bridge.is_running()
+    assert bridge.error() == "runtime boom"
+    assert len(_TrackingClient.instances) == 1
+    assert len(_TrackingMappingRepo.instances) == 1
+
+    monkeypatch.setattr(bridge_module, "DiscordBot", FakeBot)
+    started, _message = bridge.start(**kwargs)
+
+    assert started
+    assert _TrackingClient.instances[0].closed
+    assert _TrackingMappingRepo.instances[0].closed
+    assert FakeBot.instances[-1].logged_in.wait(timeout=5)
+    bridge.stop()

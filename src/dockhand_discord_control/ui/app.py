@@ -12,7 +12,8 @@ from pathlib import Path
 
 import reflex as rx
 
-from dockhand_discord_control.persistence import Settings, SqliteSettingsRepository
+from dockhand_discord_control.config import Settings
+from dockhand_discord_control.persistence import SqliteSettingsRepository
 
 from .bridge import discord_bridge
 from .pages import dashboard_page, mappings_page, settings_page
@@ -139,9 +140,12 @@ def _start_discord_bridge() -> None:
     try:
         db_path = Settings().db_path
         settings_repo = SqliteSettingsRepository(db_path)
-        base_url, api_token = settings_repo.get_dockhand_settings()
-        token = settings_repo.get_discord_token()
-        guild_id = settings_repo.get_discord_guild_id()
+        try:
+            base_url, api_token = settings_repo.get_dockhand_settings()
+            token = settings_repo.get_discord_token()
+            guild_id = settings_repo.get_discord_guild_id()
+        finally:
+            settings_repo.close()
     except Exception as exc:  # pragma: no cover - infrastructure failure
         logger.warning("Discord bridge skipped: cannot read settings: %s", exc)
         return

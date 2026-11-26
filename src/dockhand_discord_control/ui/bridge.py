@@ -88,6 +88,8 @@ class DiscordBridge:
         self._config: tuple[str, str | None, str, str] | None = None
         self._cancel: threading.Event | None = None
         self._error: str | None = None
+        self._dockhand_client: DockhandApiClient | None = None
+        self._mapping_repo: SqliteChannelMappingRepository | None = None
 
     # -- queries ----------------------------------------------------------
 
@@ -149,22 +151,30 @@ class DiscordBridge:
                         "The previous Discord bot did not stop cleanly; "
                         "restart the app to replace it."
                     )
+            elif self._thread is not None:
+                self._stop_locked()
+            dockhand_client: DockhandApiClient | None = None
+            mapping_repo: SqliteChannelMappingRepository | None = None
             try:
+                handlers, dockhand_client, mapping_repo = self._build_handlers(
+                    base_url=base_url,
+                    api_token=api_token,
+                    db_path=db_path,
+                )
                 bot = DiscordBot(
                     token=token,
-                    handlers=self._build_handlers(
-                        base_url=base_url,
-                        api_token=api_token,
-                        db_path=db_path,
-                    ),
+                    handlers=handlers,
                     guild_id=guild_id,
                 )
             except Exception as exc:
+                self._close_resources(dockhand_client, mapping_repo)
                 self._set_error(str(exc))
                 logger.warning("Discord bridge failed to start: %s", exc)
                 return False, f"Discord bot failed to start: {exc}"
             self._token = token
             self._config = config
+            self._dockhand_client = dockhand_client
+            self._mapping_repo = mapping_repo
             with self._data_lock:
                 self._bot = bot
                 self._cancel = cancel
@@ -202,6 +212,24 @@ class DiscordBridge:
         with self._data_lock:
             self._error = message
 
+    @staticmethod
+    def _close_resources(
+        dockhand_client: DockhandApiClient | None,
+        mapping_repo: SqliteChannelMappingRepository | None,
+    ) -> None:
+        if dockhand_client is not None:
+            try:
+                dockhand_client.close()
+            except Exception:  # pragma: no cover - best effort
+                logger.warning("Dockhand client did not close cleanly", exc_info=True)
+        if mapping_repo is not None:
+            try:
+                mapping_repo.close()
+            except Exception:  # pragma: no cover - best effort
+                logger.warning(
+                    "Mapping repository did not close cleanly", exc_info=True
+                )
+
     def _stop_locked(self) -> None:
         with self._data_lock:
             bot = self._bot
@@ -226,6 +254,8 @@ class DiscordBridge:
                     "Discord bot thread did not stop within %ss", self.STOP_TIMEOUT
                 )
                 return
+        dockhand_client = self._dockhand_client
+        mapping_repo = self._mapping_repo
         with self._data_lock:
             self._bot = None
             self._loop = None
@@ -233,7 +263,10 @@ class DiscordBridge:
         self._thread = None
         self._token = None
         self._config = None
+        self._dockhand_client = None
+        self._mapping_repo = None
         self._set_error(None)
+        self._close_resources(dockhand_client, mapping_repo)
 
     def _run(
         self,
@@ -289,17 +322,19 @@ class DiscordBridge:
         base_url: str,
         api_token: str,
         db_path: str,
-    ) -> DiscordCommandHandlers:
+    ) -> tuple[
+        DiscordCommandHandlers, DockhandApiClient, SqliteChannelMappingRepository
+    ]:
         """Build the command handlers used by the Discord slash commands."""
         client = DockhandApiClient(base_url=base_url, api_token=api_token)
         mapping_repo = SqliteChannelMappingRepository(db_path)
-        return DiscordCommandHandlers(
+        handlers = DiscordCommandHandlers(
             snapshot_use_case=SnapshotUseCase(client),
             start_use_case=StartContainerUseCase(client, mapping_repo),
             stop_use_case=StopContainerUseCase(client, mapping_repo),
             restart_use_case=RestartContainerUseCase(client, mapping_repo),
-            mapping_repo=mapping_repo,
         )
+        return handlers, client, mapping_repo
 
 
 discord_bridge = DiscordBridge()

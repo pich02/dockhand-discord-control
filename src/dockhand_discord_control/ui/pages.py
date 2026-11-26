@@ -123,6 +123,7 @@ def settings_page() -> rx.Component:
             ),
             rx.button(
                 "Save settings",
+                type="button",
                 on_click=AppState.save_settings,  # type: ignore[arg-type]
                 variant="solid",
                 width="100%",
@@ -146,43 +147,109 @@ def mappings_page() -> rx.Component:
         rx.text(
             "Map containers to Discord channels and toggle their visibility.",
         ),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Container"),
-                    rx.table.column_header_cell("Channel ID"),
-                    rx.table.column_header_cell("Enabled"),
-                    rx.table.column_header_cell("Save"),
-                )
-            ),
-            rx.table.body(
-                rx.foreach(
-                    AppState.mappings,
-                    lambda mapping: rx.table.row(
-                        rx.table.cell(mapping["container_name"]),
-                        rx.input(
-                            value=mapping["channel_id"],
-                            on_change=lambda value: AppState.save_mapping(  # type: ignore[arg-type]
-                                mapping["container_name"], value, mapping["enabled"]
-                            ),
-                            width="100%",
-                        ),
-                        rx.switch(
-                            is_checked=mapping["enabled"],
-                            on_change=lambda value: AppState.toggle_mapping(  # type: ignore[arg-type]
-                                mapping["container_name"], mapping["channel_id"]
-                            ),
-                        ),
-                        rx.button(
-                            "Save",
-                            on_click=lambda: AppState.save_mapping(  # type: ignore[arg-type]
-                                mapping["container_name"],
-                                mapping["channel_id"],
-                                mapping["enabled"],
-                            ),
-                        ),
+        rx.box(
+            rx.text("Add mapping", weight="bold", margin_bottom="0.5rem"),
+            rx.cond(
+                AppState.container_names.length() > 0,  # type: ignore[attr-defined]
+                rx.vstack(
+                    rx.select(
+                        AppState.container_names,
+                        value=AppState.new_mapping_container_name,
+                        on_change=AppState.set_new_mapping_container_name,  # type: ignore[arg-type]
+                        placeholder="Select container",
+                        width="100%",
                     ),
-                )
+                    rx.input(
+                        value=AppState.new_mapping_channel_id,
+                        placeholder="Discord channel ID",
+                        on_change=AppState.set_new_mapping_channel_id,  # type: ignore[arg-type]
+                        debounce_timeout=0,
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.switch(
+                            checked=AppState.new_mapping_enabled,
+                            on_change=AppState.set_new_mapping_enabled,  # type: ignore[arg-type]
+                        ),
+                        rx.text("Enabled"),
+                        spacing="2",
+                        align="center",
+                    ),
+                    rx.button(
+                        "Add mapping",
+                        on_click=AppState.add_mapping,  # type: ignore[arg-type]
+                        variant="solid",
+                    ),
+                    spacing="2",
+                    align="stretch",
+                    width="100%",
+                ),
+                rx.text(
+                    "No known containers. Configure Dockhand settings and refresh "
+                    "the dashboard to load containers before adding mappings.",
+                ),
+            ),
+            padding="1rem",
+            border="1px solid #ddd",
+            border_radius="8px",
+            margin_bottom="1rem",
+            width="100%",
+        ),
+        rx.cond(
+            AppState.mappings.length() > 0,  # type: ignore[attr-defined]
+            rx.table.root(
+                rx.table.header(
+                    rx.table.row(
+                        rx.table.column_header_cell("Container"),
+                        rx.table.column_header_cell("Channel ID"),
+                        rx.table.column_header_cell("Enabled"),
+                        rx.table.column_header_cell("Save"),
+                    )
+                ),
+                rx.table.body(
+                    rx.foreach(
+                        AppState.mappings,
+                        lambda mapping, idx: rx.table.row(
+                            rx.table.cell(mapping["container_name"]),
+                            rx.table.cell(
+                                rx.input(
+                                    value=mapping["channel_id"],
+                                    on_change=lambda value: (
+                                        AppState.update_mapping_channel_id(  # type: ignore[arg-type]
+                                            idx, value
+                                        )
+                                    ),
+                                    width="100%",
+                                )
+                            ),
+                            rx.table.cell(
+                                rx.switch(
+                                    checked=mapping["enabled"],
+                                    on_change=lambda value: (
+                                        AppState.update_mapping_enabled(  # type: ignore[arg-type]
+                                            idx, value
+                                        )
+                                    ),
+                                )
+                            ),
+                            rx.table.cell(
+                                rx.button(
+                                    "Save",
+                                    on_click=lambda: AppState.save_mapping(  # type: ignore[arg-type]
+                                        mapping["container_name"],
+                                        mapping["channel_id"],
+                                        mapping["enabled"],
+                                        mapping["original_channel_id"],
+                                    ),
+                                )
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            rx.text(
+                "No mappings yet. Use the form above to add a channel mapping "
+                "for a known container.",
             ),
         ),
         rx.button(

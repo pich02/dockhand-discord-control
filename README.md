@@ -25,19 +25,12 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 ```
 
-3. Create the environment file from the example and fill in your values:
+3. Create the environment file from the example. Only the SQLite database path is configured via the environment; Dockhand and Discord credentials are configured later through the web UI at `/settings`.
 
 ```bash
 cp .env.example .env
-# edit .env with your Dockhand URL/token and Discord bot token
+# optionally edit .env to override DB_PATH (defaults to ./data/app.sqlite)
 ```
-
-Required variables:
-
-- `DOCKHAND_BASE_URL` — base URL of your Dockhand API (e.g. `http://dockhand:8080`)
-- `DOCKHAND_API_TOKEN` — Dockhand API bearer token
-- `DISCORD_BOT_TOKEN` — your Discord bot token
-- `DISCORD_GUILD_ID` — optional; guild ID to scope slash command registration
 
 4. Start the app:
 
@@ -63,7 +56,7 @@ Press `Ctrl+C` in the terminal running the app.
 
 ```bash
 cp .env.example .env
-# edit .env with your values
+# optionally edit .env to override DB_PATH
 
 docker compose up --build
 ```
@@ -101,16 +94,24 @@ docker compose logs -f
 
 ## Configuration
 
-| Variable | Required | Description | Example |
-|---|---|---|---|
-| `DOCKHAND_BASE_URL` | Yes | Dockhand API base URL | `http://dockhand:8080` |
-| `DOCKHAND_API_TOKEN` | Yes | Dockhand API bearer token | `...` |
-| `DISCORD_BOT_TOKEN` | Yes | Discord bot token | `...` |
-| `DISCORD_GUILD_ID` | No | Guild ID to scope slash commands | `1234567890` |
-| `DB_PATH` | No | SQLite database path | `/app/data/app.sqlite` |
+Only the SQLite database path is read from the environment. Dockhand and Discord
+credentials are configured through the web UI at `/settings` and persisted in SQLite.
 
-Configuration is read from `.env` (docker compose) or the environment (local run).
-Runtime overrides may also be stored in SQLite via the Reflex UI.
+| Variable | Required | Description | Default / Example |
+|---|---|---|---|
+| `DB_PATH` | No | SQLite database path | `./data/app.sqlite` (local), `/app/data/app.sqlite` (Docker volume) |
+
+### UI-configured settings (`/settings`)
+
+| Setting | Required | Description |
+|---|---|---|
+| Dockhand base URL | Yes | Base URL of your Dockhand API (e.g. `http://dockhand:8080`) |
+| Dockhand API token | Yes | Dockhand API bearer token |
+| Discord bot token | Yes, for bot control | Discord bot token |
+| Discord guild ID | No | Guild ID to scope slash command registration |
+
+These values are stored in the SQLite `app_settings` table. The `.env` file (or
+process environment) only supplies `DB_PATH`.
 
 ### Saving settings from the UI
 

@@ -47,13 +47,47 @@ testpaths = ["tests"]
 root_packages = ["dockhand_discord_control"]
 
 [[tool.importlinter.contracts]]
-name = "Dockhand Discord Control layered architecture"
-type = "layers"
-layers = [
-    "dockhand_discord_control.ui",
+name = "Domain is isolated from internal packages"
+type = "forbidden"
+source_modules = ["dockhand_discord_control.domain"]
+forbidden_modules = [
+    "dockhand_discord_control.config",
     "dockhand_discord_control.dockhand",
     "dockhand_discord_control.discord",
     "dockhand_discord_control.persistence",
-    "dockhand_discord_control.domain",
+    "dockhand_discord_control.ui",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters depend only on domain"
+type = "forbidden"
+source_modules = [
+    "dockhand_discord_control.dockhand",
+    "dockhand_discord_control.discord",
+    "dockhand_discord_control.persistence",
+]
+forbidden_modules = [
     "dockhand_discord_control.config",
+    "dockhand_discord_control.ui",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters are independent"
+type = "independence"
+modules = [
+    "dockhand_discord_control.dockhand",
+    "dockhand_discord_control.discord",
+    "dockhand_discord_control.persistence",
+]
+
+[[tool.importlinter.contracts]]
+name = "Config has no internal dependencies"
+type = "forbidden"
+source_modules = ["dockhand_discord_control.config"]
+forbidden_modules = [
+    "dockhand_discord_control.domain",
+    "dockhand_discord_control.dockhand",
+    "dockhand_discord_control.discord",
+    "dockhand_discord_control.persistence",
+    "dockhand_discord_control.ui",
 ]

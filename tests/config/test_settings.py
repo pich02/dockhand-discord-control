@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dockhand_discord_control.persistence import Settings
+from dockhand_discord_control.config import Settings
 
 
 def test_settings_defaults(monkeypatch) -> None:
